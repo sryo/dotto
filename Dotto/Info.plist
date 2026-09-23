@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Dotto runs scripts you approve in apps like Finder and Mail, and reads which folder a Finder window shows.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Dotto reads and organizes files in folders you point it at.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Dotto reads and organizes files in folders you point it at.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Dotto reads and organizes files in folders you point it at.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>Dotto reads and organizes files in folders you point it at.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Dotto reads and organizes files in folders you point it at.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Dotto needs screen recording access to see your screen and help you.</string>
+</dict>
+</plist>
