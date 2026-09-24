@@ -249,7 +249,8 @@ final class CursorSurfaces {
         overlayWindow.contentView = NSHostingView(rootView: CursorOverlayContentView(
             viewModel: viewModel,
             targetWindowOriginInOverlay: CGPoint(x: Self.overlayOutsets.left, y: Self.overlayOutsets.top),
-            drawsCursorAtTargetWindowOrigin: false
+            drawsCursorAtTargetWindowOrigin: false,
+            drawnSurface: .overlayOnTargetWindow
         )).withClearBackground().sizedOnlyByItsPanel()
         return overlayWindow
     }
@@ -277,7 +278,8 @@ final class CursorSurfaces {
         parkedCursorWindow.contentView = NSHostingView(rootView: CursorOverlayContentView(
             viewModel: viewModel,
             targetWindowOriginInOverlay: CGPoint(x: Self.overlayOutsets.left, y: Self.overlayOutsets.top),
-            drawsCursorAtTargetWindowOrigin: true
+            drawsCursorAtTargetWindowOrigin: true,
+            drawnSurface: .parkedAtSummonOrigin
         )).withClearBackground().sizedOnlyByItsPanel()
         return parkedCursorWindow
     }
@@ -565,6 +567,8 @@ private struct CursorOverlayContentView: View {
     let targetWindowOriginInOverlay: CGPoint
     /// The parked cursor always sits at the point it is parked on, whatever the window-relative point is.
     let drawsCursorAtTargetWindowOrigin: Bool
+    /// Which surface this window is; its cursor animates only while that surface is the one shown.
+    let drawnSurface: CursorSurface
 
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
 
@@ -586,7 +590,8 @@ private struct CursorOverlayContentView: View {
             CursorView(appearance: overlayPillAppearance, configuration: styleConfiguration,
                             showsPill: !viewModel.pillIsClickable,
                             pillRoomAroundTip: pillRoomAroundTip(cursorPointInOverlayWindow: cursorPointInOverlayWindow,
-                                                                 cursorScale: cursorScale))
+                                                                 cursorScale: cursorScale),
+                            isOnShownSurface: viewModel.surface == drawnSurface)
                 .offset(x: targetWindowOriginInOverlay.x + cursorPointInOverlayWindow.x,
                         y: targetWindowOriginInOverlay.y + cursorPointInOverlayWindow.y)
         }

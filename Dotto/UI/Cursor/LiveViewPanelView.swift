@@ -173,7 +173,8 @@ struct LiveViewPanelView: View {
                     .controlSize(.small)
                     .frame(width: previewWidth, height: previewHeight)
             }
-            CursorView(appearance: viewModel.appearance, configuration: liveViewCursorConfiguration, showsPill: false)
+            CursorView(appearance: viewModel.appearance, configuration: liveViewCursorConfiguration, showsPill: false,
+                       isOnShownSurface: viewModel.surface == .liveViewPanel)
                 .offset(x: viewModel.cursorPointInWindow.x * windowToPreviewScale,
                         y: viewModel.cursorPointInWindow.y * windowToPreviewScale)
         }

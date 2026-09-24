@@ -12,6 +12,9 @@ struct CursorView: View {
     /// The visible frame of the tip's screen in this view's points (the tip at the origin, before the cursor's scale).
     /// Near its edges the pill flips to the left of or above the tip; nil keeps it below and to the right.
     var pillRoomAroundTip: CGRect? = nil
+    /// False while the window drawing this cursor isn't the surface on screen. An ordered-out window keeps rendering
+    /// a running per-frame timeline, which kept Dotto at full CPU after a task ended in the waiting or ring states.
+    var isOnShownSurface: Bool = true
 
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var ringRotationAccumulator = CursorRingRotationAccumulator()
@@ -38,7 +41,7 @@ struct CursorView: View {
     }
 
     private var needsPerFrameUpdates: Bool {
-        guard !reducesMotion else { return false }
+        guard !reducesMotion, isOnShownSurface else { return false }
         return (ringTextIsVisible && ringTextDegreesPerSecond > 0) || activity == .waiting
     }
 
