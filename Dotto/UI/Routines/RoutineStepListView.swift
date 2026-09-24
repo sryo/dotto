@@ -48,6 +48,12 @@ struct RoutineStepListView: View {
             return nil
         case .typeText(let textTemplate, _, let pressReturnAfter):
             return "types “\(textTemplate)”" + (pressReturnAfter ? " then Return" : "")
+        case .replaceText(let findTemplate, let replacementTemplate, _, let insertionPosition):
+            switch insertionPosition {
+            case .atFind: return "replaces “\(findTemplate)” with “\(replacementTemplate)”"
+            case .start: return "adds “\(replacementTemplate)” at the start"
+            case .end: return "adds “\(replacementTemplate)” at the end"
+            }
         case .pressKey(let keyName, let modifiers):
             return "presses " + (modifiers.map(\.rawValue) + [keyName]).joined(separator: "+")
         case .waitForText(let textTemplate, let timeoutSeconds):

@@ -10,7 +10,7 @@ enum BackgroundActionPolicy {
         case .click(let clickType):
             if clickType != .single { return true }
             return step.targetLocator?.role == "AXMenuButton" || step.targetLocator?.role == "AXPopUpButton"
-        case .typeText, .pressKey, .waitForText:
+        case .typeText, .replaceText, .pressKey, .waitForText:
             return false
         }
     }
@@ -22,7 +22,7 @@ enum BackgroundActionPolicy {
         case .clickElement(_, let clickType):
             if clickType != .single { return true }
             return targetNode?.role == "AXMenuButton" || targetNode?.role == "AXPopUpButton"
-        case .typeText, .pressKey, .scroll:
+        case .typeText, .replaceText, .pressKey, .scroll:
             return false
         }
     }

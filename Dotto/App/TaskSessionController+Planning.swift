@@ -12,7 +12,7 @@ extension TaskSessionController {
         // Only while Dotto holds the keyboard (the command bar is key, or Dotto's own file picker activated it):
         // handing it back to where the user was restores their focus, it doesn't take anyone's.
         let thisAppHoldsKeyboard = NSApp.keyWindow != nil || NSApp.isActive
-        commandBarPanelController?.hideCommandBarAfterSubmitting()
+        let submittedCommandPill = commandBarPanelController?.hideCommandBarAfterSubmitting(submittedCommandText: trimmedCommandText)
         if thisAppHoldsKeyboard, let applicationFrontmostWhenCommandBarWasSummoned,
            applicationFrontmostWhenCommandBarWasSummoned.processIdentifier != ProcessInfo.processInfo.processIdentifier {
             applicationFrontmostWhenCommandBarWasSummoned.activate()
@@ -60,8 +60,16 @@ extension TaskSessionController {
         }
         adoptTaskStartResources(taskStartResources)
         if let summonOrigin = currentTaskSummonOriginInTopLeftGlobalPoints {
+            // Submitted from the pill at the pointer: the cursor's status pill takes the capsule's place, and the pill
+            // morphs into it first unless Reduce Motion is on.
+            let morphsCommandPill = submittedCommandPill?.morphsIntoStatusPill ?? false
             cursorController.beginPlanning(atSummonOriginInTopLeftGlobalPoints: summonOrigin,
-                                           targetApplicationName: targetApplication.applicationName)
+                                           targetApplicationName: targetApplication.applicationName,
+                                           commandPillHandoff: submittedCommandPill?.commandPillHandoff,
+                                           holdsStatusPillForMorph: morphsCommandPill)
+            if let submittedCommandPill, morphsCommandPill {
+                morphSubmittedCommandPillIntoStatusPill(submittedCommandPill)
+            }
         } else {
             // Nowhere to put the cursor: the planning card (with its Stop) stands in for it.
             checklistPanelController?.showChecklistPanel(makeKey: false)
@@ -109,6 +117,17 @@ extension TaskSessionController {
         }
         currentPlanningOrExecutionTask = planningTask
         mostRecentlyStartedRunTask = planningTask
+    }
+
+    private func morphSubmittedCommandPillIntoStatusPill(_ submittedCommandPill: SubmittedCommandPill) {
+        guard let commandBarPanelController,
+              let heldStatusPillFrame = cursorController.heldStatusPillFrameForCommandPillHandoff else {
+            cursorController.finishCommandPillHandoff()
+            return
+        }
+        commandBarPanelController.morphSubmittedCommandPill(
+            submittedCommandPill, intoStatusPillAt: heldStatusPillFrame, cursorViewModel: cursorController.viewModel,
+            onMorphFinished: { [weak self] in self?.cursorController.finishCommandPillHandoff() })
     }
 
     // MARK: - The planning thread

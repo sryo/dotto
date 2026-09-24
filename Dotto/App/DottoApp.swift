@@ -22,9 +22,6 @@ final class DottoAppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarPanelController: MenuBarPanelController?
     private var taskSessionController: TaskSessionController?
     private var actionBackend: AccessibilityActionBackend?
-    #if DEBUG
-    private var selfTestBatteryRunner: SelfTestBatteryRunner?
-    #endif
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("Dotto: version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")")
@@ -60,13 +57,6 @@ final class DottoAppDelegate: NSObject, NSApplicationDelegate {
         )
         self.actionBackend = actionBackend
         let directRouteExecutionDependencies = Self.makeDirectRouteExecutionDependencies()
-        #if DEBUG
-        if let directRouteExecutionDependencies {
-            selfTestBatteryRunner = SelfTestBatteryRunner(claudeTransport: claudeTransport,
-                                                          directRouteExecutionDependencies: directRouteExecutionDependencies)
-            selfTestBatteryRunner?.startListening()
-        }
-        #endif
         let taskSessionController = TaskSessionController(dependencies: TaskSessionControllerDependencies(
             claudeTransport: claudeTransport,
             anthropicAPIKeyStore: anthropicAPIKeyStore,
@@ -85,9 +75,6 @@ final class DottoAppDelegate: NSObject, NSApplicationDelegate {
             directRouteExecutionDependencies: directRouteExecutionDependencies
         ))
         self.taskSessionController = taskSessionController
-        #if DEBUG
-        selfTestBatteryRunner?.taskSessionController = taskSessionController
-        #endif
 
         menuBarPanelController = MenuBarPanelController(taskSessionController: taskSessionController)
         taskSessionController.start()

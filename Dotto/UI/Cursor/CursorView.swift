@@ -76,9 +76,9 @@ struct CursorView: View {
                         }
                         .offset(pillOffsetFromTip)
                         .opacity(pillIsShown ? 1 : 0)
-                        .scaleEffect(pillIsShown ? 1 : 0.8, anchor: .topLeading)
-                        .animation(animation(.spring(response: 0.28, dampingFraction: 0.62)), value: pillIsShown)
-                        .animation(animation(.easeInOut(duration: 0.3)), value: activity)
+                        .scaleEffect(pillIsShown || reducesMotion ? 1 : DesignSystem.Motion.appearScale, anchor: .topLeading)
+                        .animation(DesignSystem.Motion.appearOrFade(reducesMotion: reducesMotion), value: pillIsShown)
+                        .animation(animation(DesignSystem.Motion.resize), value: activity)
                 }
             }
             .frame(width: 1, height: 1, alignment: .topLeading)

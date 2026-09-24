@@ -54,6 +54,7 @@ final class ChecklistPanelController {
                     ofScreenContainingTopLeftGlobalPoint: Self.referencePoint(of: anchor)))
             if layoutModel.maximumCardHeight != maximumCardHeight { layoutModel.maximumCardHeight = maximumCardHeight }
             panelFrameApplier?.cancelPendingFrameUpdate()
+            if !wasVisible { prepareEntrance(of: checklistPanel) }
             if let panelFrame = placedPanelFrame(forContentHeight: measuredContentHeight()) {
                 panelFrameApplier?.applyFrameNow(panelFrame)
             }
@@ -62,7 +63,63 @@ final class ChecklistPanelController {
             checklistPanel.makeKeyAndOrderFront(nil)
         }
         checklistPanel.orderFrontRegardless()
-        if !wasVisible { onVisibilityChanged?(true) }
+        if !wasVisible {
+            enter(checklistPanel)
+            onVisibilityChanged?(true)
+        }
+    }
+
+    private var reducesMotion: Bool {
+        taskSessionController.cursorStyleConfiguration.reducesMotion(
+            systemReduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+    }
+
+    /// The popover grows out of what it hangs from: it starts slightly smaller, at the point its tail aims from, and
+    /// transparent, and is shown in that state.
+    private func prepareEntrance(of checklistPanel: ChecklistKeyablePanel) {
+        var startingStateTransaction = Transaction()
+        startingStateTransaction.disablesAnimations = true
+        withTransaction(startingStateTransaction) {
+            layoutModel.hasEntered = false
+        }
+        checklistPanel.alphaValue = 0
+    }
+
+    /// Grows to full size on the appear spring while its window (and the window's shadow) fades in; under Reduce
+    /// Motion it only fades in, briefly.
+    private func enter(_ checklistPanel: ChecklistKeyablePanel) {
+        if let currentPlacement {
+            layoutModel.growthAnchor = Self.growthAnchor(of: currentPlacement)
+        }
+        let reducesMotion = self.reducesMotion
+        // Started on the next turn, once the starting state is on screen.
+        DispatchQueue.main.async { [weak self, weak checklistPanel] in
+            MainActor.assumeIsolated {
+                guard let self, let checklistPanel, checklistPanel.isVisible else { return }
+                withAnimation(DesignSystem.Motion.appearOrFade(reducesMotion: reducesMotion)) {
+                    self.layoutModel.hasEntered = true
+                }
+                NSAnimationContext.runAnimationGroup({ animationContext in
+                    animationContext.duration = reducesMotion
+                        ? DesignSystem.Motion.reducedMotionFadeDurationSeconds
+                        : DesignSystem.Motion.windowFadeInDurationSeconds
+                    animationContext.timingFunction = DesignSystem.Motion.windowFadeTimingFunction
+                    checklistPanel.animator().alphaValue = 1
+                }, completionHandler: { [weak checklistPanel] in
+                    MainActor.assumeIsolated { checklistPanel?.invalidateShadow() }
+                })
+            }
+        }
+    }
+
+    /// The tail's tip when there is a tail (it points at the cursor's pill); otherwise the corner the panel opened from.
+    private static func growthAnchor(of placement: AttachedPanelPlacement) -> UnitPoint {
+        let panelWidth = max(placement.panelFrame.width, 1)
+        if let tail = placement.tail {
+            return UnitPoint(x: min(max(tail.centerOffsetFromLeftEdge / panelWidth, 0), 1), y: tail.edge == .top ? 0 : 1)
+        }
+        return UnitPoint(x: placement.horizontalDirection == .rightward ? 0 : 1,
+                         y: placement.verticalDirection == .below ? 0 : 1)
     }
 
     /// Opens the thread with its reply field focused. The popover takes the keyboard only here, for a question
@@ -102,6 +159,7 @@ final class ChecklistPanelController {
         let wasVisible = isVisible
         panelFrameApplier?.cancelPendingFrameUpdate()
         checklistPanel?.orderOut(nil)
+        checklistPanel?.alphaValue = 1
         currentAnchor = nil
         currentPlacement = nil
         if wasVisible { onVisibilityChanged?(false) }
@@ -219,6 +277,9 @@ final class ChecklistPanelController {
 final class ChecklistPopoverLayoutModel: ObservableObject {
     @Published var tail: AttachedPanelTail?
     @Published var maximumCardHeight: CGFloat = 560
+    /// False only while the popover is about to grow in from `growthAnchor`.
+    @Published var hasEntered = true
+    @Published var growthAnchor: UnitPoint = .topLeading
 }
 
 /// The planning thread's reply field: its text, kept here so Return (caught by the panel) can send it, and requests
@@ -241,6 +302,12 @@ private struct ChecklistPopoverView: View {
     let onSubmitReplyDraft: () -> Void
     let onContentHeightChange: (CGFloat) -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+
+    private var reducesMotion: Bool {
+        taskSessionController.cursorStyleConfiguration.reducesMotion(systemReduceMotion: systemReduceMotion)
+    }
+
     var body: some View {
         let tailLength = AttachedPanelPlacementCalculator.tailLength
         let tail = layoutModel.tail
@@ -255,6 +322,8 @@ private struct ChecklistPopoverView: View {
                         .offset(x: tail.centerOffsetFromLeftEdge - AttachedPanelPlacementCalculator.tailWidth / 2)
                 }
             }
+            .scaleEffect(layoutModel.hasEntered || reducesMotion ? 1 : DesignSystem.Motion.panelAppearScale,
+                         anchor: layoutModel.growthAnchor)
     }
 }
 

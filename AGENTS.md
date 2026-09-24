@@ -77,8 +77,10 @@ The app is menu bar only (`LSUIElement`): a status item, a command bar, a floati
    - **Routine replay first** (`Core/Routines/RoutineReplayEngine`). Replay is deterministic, with no model call
      while every step's expectation holds.
    - **Agent loop as the fallback** (`claude-sonnet-5`, `Core/Agent/ChecklistItemAgentLoop`). It uses custom
-     tools (`read_ui`, `click`, `type_text`, `press_key`, `scroll`, `click_point`, `screenshot`, `wait_for`,
-     `finish_item`). The built-in computer-use tool is not used. When replay fails partway, the agent takes over
+     tools (`read_ui`, `click`, `type_text`, `replace_text`, `press_key`, `scroll`, `click_point`, `screenshot`,
+     `wait_for`, `finish_item`). The built-in computer-use tool is not used. `replace_text` edits part of a field's
+     text (or inserts at its start or end) through Accessibility alone, with no caret, clicks or keys, so text edits
+     stay in the background. When replay fails partway, the agent takes over
      from the failed step, and the routine is patched.
    - The first verified agent item is compiled into a parameterized routine (`RoutineCompiler`), and the items
      after it replay that routine.
@@ -302,8 +304,8 @@ Every one of these has tests in `DottoCoreTests/`. If a change weakens one of th
    three are neutralized (`neutralizingTrustTags`). The system prompts say neither can add items or widen the task. Tool results fence
    anything the app reported (action reports, error details) the same way: Dotto's own wording stays outside the
    block (`ActionBackendError.fencedMessageForModel`, `ClaudeToolResultBuilding.fencedMessageForModel`).
-6. **The audit log is redacted** (`Core/Audit/AuditLogWriter`). Text Dotto typed is replaced by its SHA-256
-   fingerprint wherever it resurfaces, and messages and details are truncated. The log directory is `0700` and
+6. **The audit log is redacted** (`Core/Audit/AuditLogWriter`). Text Dotto typed (and `replace_text`'s `find` and
+   `replace_with`) is replaced by its SHA-256 fingerprint wherever it resurfaces, and messages and details are truncated. The log directory is `0700` and
    its files are `0600`.
 7. **Routines are signed.** Each file carries an HMAC-SHA256 signature (`RoutineIntegritySigning`, with the key
    held in the Keychain by `Platform/Routines/KeychainRoutineSigningKeyProvider`). A file is skipped if it is
@@ -389,13 +391,6 @@ Every one of these has tests in `DottoCoreTests/`. If a change weakens one of th
     macOS 14.2) and produces no bundle.
   - `zsh scripts/run-core-tests.sh` runs the import guard and the invariant 8 guard, then compiles `Dotto/Core/**`
     together with `DottoCoreTests/**` into a scratch binary and runs it.
-- **End-to-end self-test (Debug builds only, `App/SelfTestBatteryRunner`).** Posting the distributed notification
-  `com.sryo.dotto.selfTest.run` makes the running Debug app read `~/DottoEvals/battery.json` and write
-  `~/DottoEvals/results.json`. A scenario with a `folder` (inside `~/DottoEvals` only) runs the real planner on the
-  user's key against a stand-in Finder window, then the approved direct plan (every confirmation answered "skip",
-  optional `undoAfter`). A scenario with an `application` runs through the real session (cursor route) against a
-  throwaway document the harness opened in the background, allows only step confirmations that stay inside it and
-  never brings an app forward. Fixtures, checks and runners live outside the repo (the owner's scratch folder).
 - There is no XCTest and no Xcode test target. Tests use the small harness in
   `DottoCoreTests/Support/CoreTestHarness.swift`. To add tests:
   - Declare a top-level `let <name>TestSuite = CoreTestSuite(name: "…", testCases: [CoreTestCase(name: "…") { … }])`
@@ -447,6 +442,24 @@ Every one of these has tests in `DottoCoreTests/`. If a change weakens one of th
 - Use SwiftUI for all UI. Use AppKit only where SwiftUI can't do the job: `NSPanel` hosts bridged through
   `NSHostingView`, event taps, and AX.
 - UI state is `@MainActor`. Use async/await, not completion handlers.
+- **Motion is liquid.** Dotto's UI morphs and bounces in a fluid, liquid way (the owner's direction):
+  - An element turns into the next one; it never fades out while another pops in somewhere else. The command pill
+    becomes the cursor's status pill, and the status pill grows into the checklist.
+  - Arrivals and size changes bounce visibly: springy, then settled. That means spring damping around 0.6–0.7, and
+    a pill pops in from about 60% of its size. An arrival must never flatten into a plain fade or a stiff ease-only
+    slide.
+  - When text swaps, the old text leaves before the new one arrives, so two texts are never both clearly visible.
+  - A shadow stays continuous across a handoff, and the last frame of a morph matches the element that replaces it.
+  - Use the shared motion tokens in `DesignSystem.Motion` (`UI/DesignSystem/DesignSystemMotion.swift`), never ad hoc
+    springs:
+    - `appear`, `morph` and `resize` are soft springs
+    - `disappear` is a short ease-out
+    - `contentFade` swaps text
+    - window fades use `windowFadeTimingFunction`
+
+    The staged pill morph is timed by `Core/Cursor/CommandPillMorphTimeline`.
+  - Reduce Motion drops scale and position springs: changes are instant or a short fade.
+  - Check new motion in a frame-by-frame recording before calling it done.
 - Every button shows the pointer cursor on hover (`.pointerCursor()`) and has a hover state. For any interactive
   element, decide its cursor, its visual feedback, and whether hover should signal that it is clickable.
 - Panels size themselves; hosting views never do (`UI/Shared/PanelContentSizing`). Every `NSHostingView` in a Dotto
@@ -480,8 +493,8 @@ Every one of these has tests in `DottoCoreTests/`. If a change weakens one of th
 | `Dotto/Core/Agent/` | Tool schemas and the decoder, `PromptLibrary`, `ChecklistItemAgentLoop`, `ChecklistItemExecutionModels` (an item's execution context and result) |
 | `Dotto/Core/Claude/` | Messages API models, the SSE accumulator, the tool-conversation runner, `ClaudeTransport` and its metered wrapper, model ids, `ClaudeMessagesRequestGuard` (model allowlist, `max_tokens` cap, custom tools only), `AnthropicMessagesEndpoint` (URL and headers), `AnthropicAPIKeyFormat` (validation on save and the masked form), `AnthropicAPIKeyRenameMigration` (whether to move a key saved under the pre-rename Keychain service) |
 | `Dotto/Core/Execution/` | `TaskExecutor`, `DirectRouteExecutor` (approved direct plans: re-validation, confirmations, file operations, one script or shortcut), the `ActionBackend` protocol, the bring-forward assist decision and readiness policy, abort, run control, takeover, retry, budget, metrics |
-| `Dotto/Core/InputDelivery/` | `InputTierPlanner` (tiers and delivery confirmation) with `MenuShortcutMatcher`, pointer recipes for the assist, `FocusedKeyboardInputGuard` for open panels, change fingerprints, app kind classification |
-| `Dotto/Core/Cursor/` | The cursor seam: presentation state and mapper (planning, review and run states), `CursorPillText` (the pill's one line, with the item position), attention requests and preferences, which answers still apply and the 0.5 s click guard (`UserDecisionAnswerPolicy`), surface placement with hysteresis, `AttachedPanelPlacement` (the checklist popover beside the cursor or the live view: flips, clamping, tail), `PillPlacement` (the cursor's pill, the command pill and the live view kept inside the visible frame of their point's screen, flipped left of or above the point), flight path, style defaults |
+| `Dotto/Core/InputDelivery/` | `InputTierPlanner` (tiers and delivery confirmation) with `MenuShortcutMatcher`, `TextReplacementPlanner` (`replace_text`'s UTF-16 edits, expected value and routes), pointer recipes for the assist, `FocusedKeyboardInputGuard` for open panels, change fingerprints, app kind classification |
+| `Dotto/Core/Cursor/` | The cursor seam: presentation state and mapper (planning, review and run states), `CursorPillText` (the pill's one line, with the item position), attention requests and preferences, which answers still apply and the 0.5 s click guard (`UserDecisionAnswerPolicy`), surface placement with hysteresis, `AttachedPanelPlacement` (the checklist popover beside the cursor or the live view: flips, clamping, tail), `PillPlacement` (the cursor's pill, the command pill and the live view kept inside the visible frame of their point's screen, flipped left of or above the point), `CommandPillHandoff` (the status pill taking the submitted command pill's capsule's place: shared tip-facing edge and vertical center, same flips), flight path, style defaults |
 | `Dotto/Core/Uploads/` | `UploadFileAllowlist` and `ProtectedPathPolicy` (the protected-path deny list, shared with file operations) |
 | `Dotto/Core/DirectRoutes/` | `DirectRouteModels` (scope, plans, run reports, and the performer protocols Platform implements) and `CommandPathExtractor` (folder paths typed by the user) |
 | `Dotto/Core/FileOperations/` | Scope policy, path rules, the dry-run validator, the date-folder and rename rule expanders (sharing `FileRuleFileFilter`), `FileOperationContainmentCheck` (each operand's real folder right before a change), `FileOperationRunner`, the undo journal and `FileOperationUndoRunner` |
@@ -492,7 +505,7 @@ Every one of these has tests in `DottoCoreTests/`. If a change weakens one of th
 | `Dotto/Core/Support/` | `CanonicalJSONEncoding` (stable bytes for prompt caching and routine signatures; never change its options), `JSONValue`, SHA-256, the `SummonHotkey` model |
 | `Dotto/Core/Verification/`, `UserInterfaceReading/`, `Audit/`, `Permissions/` | Expectations and waiting, the AX snapshot and outline formatter, the audit log, permission policy |
 | `Dotto/Platform/Accessibility/AccessibilityActionBackend.swift` | The backend's entry point: target pinning, element resolution, tier dispatch |
-| `Dotto/Platform/Accessibility/AccessibilityActionBackend+Click.swift`, `+Typing`, `+Keys`, `+Scroll`, `+ChangeConfirmation`, `+Uploads` | One file per action family, the visible-change confirmation, and `upload_files` inside the assist |
+| `Dotto/Platform/Accessibility/AccessibilityActionBackend+Click.swift`, `+Typing`, `+ReplaceText`, `+Keys`, `+Scroll`, `+ChangeConfirmation`, `+Uploads` | One file per action family (`+ReplaceText`: `replace_text` through AXSelectedTextRange/AXSelectedText, else the whole AXValue, read back), the visible-change confirmation, and `upload_files` inside the assist |
 | `Dotto/Platform/Accessibility/AccessibilityElementReader.swift` with `+AttributeReading`, `+DeliverySupport`, `+Recording` | Outlines and snapshots; shared attribute reads; what delivery planning reads; what teach mode reads |
 | `Dotto/Platform/Accessibility/NativeOpenPanelDriver.swift` with `+FocusedKeyboardGuard`, `+PanelReading` | Choosing files in an open panel (invariant 3c); the inputs to Core's guard; finding the panel's parts |
 | `Dotto/Platform/Accessibility/TargetApplicationAccessibilityModes.swift`, `TargetWindowObserver.swift` | Per-task accessibility modes with crash recovery; window move and close events for takeover |
@@ -506,7 +519,7 @@ Every one of these has tests in `DottoCoreTests/`. If a change weakens one of th
 | `Dotto/UI/Shared/` | `DottoPanel` (the non-activating base of every Dotto window, with `KeyablePanel` and `NonActivatingClickablePanel`), `NSHostingView+Panels`, `PanelContentSizing` (hosting views sized only by their panel, reported content sizes, deferred frame changes), `AttachedPanelTailView`, `ScreenCorner`, screen geometry, the drag area |
 | `Dotto/UI/Cursor/` | `CursorController` (the one presenter, with `CursorViewModel`), `CursorSurfaces` (the cursor parked at the summon origin, the overlay window, the pill panel and the live view panel), `CursorView`, `CursorShapes`, `CursorAppearance` (with `CursorPalette`), `CursorPillView` (with `DecisionPill`), `LiveViewPanelView` |
 | `Dotto/UI/SummonGesture/` | `SummonGestureRingPanelController` (the click-through ring panel) and `SummonGestureRingView` |
-| `Dotto/UI/` (other) | `MenuBar` (incl. `AnthropicAPIKeySection`, `UndoLastTaskRow`, the summon shortcut recorder, circle-to-summon and attention settings), `CommandBar` (the bar with file attachments, and `CommandPillView`, the pill at the pointer), `Checklist` (the popover panel attached to the cursor, rows, the planning thread and reply field, intervention cards, routine review, direct-route previews, progress and results), `Routines` (step list), `Attention` (`AttentionChime`), `DesignSystem` |
+| `Dotto/UI/` (other) | `MenuBar` (incl. `AnthropicAPIKeySection`, `UndoLastTaskRow`, the summon shortcut recorder, circle-to-summon and attention settings), `CommandBar` (the bar with file attachments, `CommandPillView`, the pill at the pointer, and `CommandPillMorphView`, the pill turning into the cursor's status pill on Return), `Checklist` (the popover panel attached to the cursor, rows, the planning thread and reply field, intervention cards, routine review, direct-route previews, progress and results), `Routines` (step list), `Attention` (`AttentionChime`), `DesignSystem` |
 | `DottoCoreTests/` | Suites mirroring `Core/`, plus `Support/` (harness and fixtures) and `TestDoubles/` |
 | `scripts/` | `typecheck.sh`, `run-core-tests.sh`, and `release.sh` (owner only) |
 

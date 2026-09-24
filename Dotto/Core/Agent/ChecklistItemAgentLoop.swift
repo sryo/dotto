@@ -137,9 +137,10 @@ final class ChecklistItemAgentLoop {
                 continue
             }
             try abortSignal.throwIfAborted()
-            if toolUseBlock.toolName == AgentToolName.typeText.rawValue,
-               let textToType = toolUseBlock.input["text"]?.stringValue {
-                auditLogWriter.registerTypedTextForRedaction(textToType)
+            for redactedTextFieldName in AgentActionDescriptions.redactedTextInputFieldNamesByToolName[toolUseBlock.toolName] ?? [] {
+                if let fieldText = toolUseBlock.input[redactedTextFieldName]?.stringValue {
+                    auditLogWriter.registerTypedTextForRedaction(fieldText)
+                }
             }
             auditLogWriter.append(eventKind: .toolCall, itemIdentifier: context.item.itemIdentifier,
                                   message: toolUseBlock.toolName,

@@ -11,6 +11,8 @@ struct CursorPillView: View {
     /// nil where the pill can't be clicked (drawn in the click-through overlay).
     var onToggleChecklist: (() -> Void)? = nil
     var checklistIsOpen: Bool = false
+    /// False only in the command pill's morph, which draws the pill's fill and shadow itself as the capsule it morphs.
+    var drawsPillBackground: Bool = true
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -36,11 +38,27 @@ struct CursorPillView: View {
     /// The pill grows to this width, then wraps its text to a second line (with the buttons on a row below) before
     /// anything is cut.
     static let maximumPillWidth: CGFloat = 420
+    /// About one line with its buttons, in the pill's own points (before the cursor's scale). Only for placing what
+    /// must line up with the pill before it is measured; the measured size wins wherever it is known.
+    static let estimatedSingleLineHeight: CGFloat = 33
+    /// The room the clickable pill panel keeps, in the pill's own points: the maximum width (and a little more for an
+    /// answer row wider than the text), and two lines of text with the answer row and the revealed rest-of-task
+    /// answer below them.
+    static let maximumPillSizeInPanel = CGSize(width: maximumPillWidth + 20, height: 120)
     private var horizontalPadding: CGFloat { showsText ? 12 : 6 }
+
+    /// What changes the pill's size: it resizes on the resize spring when any of these change, and on nothing else
+    /// (the replay progress, click ripples and nudges have their own motion).
+    private var resizingContent: CursorPillResizingContent {
+        CursorPillResizingContent(activity: appearance.activity, pillText: appearance.pillText,
+                                  decisionOptions: appearance.decisionOptions, showsText: showsText,
+                                  offersPause: appearance.offersPause, offersStop: appearance.offersStop,
+                                  offersChecklistToggle: appearance.offersChecklistToggle)
+    }
 
     var body: some View {
         // A single-line pill keeps its capsule ends; a wrapped one is a rounded card with the same corners.
-        let pillShape = RoundedRectangle(cornerRadius: 15, style: .continuous)
+        let pillShape = RoundedRectangle(cornerRadius: CursorPillChrome.cornerRadius, style: .continuous)
         CursorPillWrappingLayout(maximumContentWidth: Self.maximumPillWidth - horizontalPadding * 2, spacing: 8) {
             if showsText {
                 HStack(alignment: .lastTextBaseline, spacing: 1) {
@@ -48,6 +66,8 @@ struct CursorPillView: View {
                         .lineLimit(2)
                         .truncationMode(.tail)
                         .fixedSize(horizontal: false, vertical: true)
+                        // The old words turn into the new ones in place while the pill resizes around them.
+                        .contentTransition(reducesMotion ? .identity : .interpolate)
                     if appearance.showsTypingCaret {
                         CursorTypingCaret(reducesMotion: reducesMotion)
                     }
@@ -64,14 +84,17 @@ struct CursorPillView: View {
         .foregroundColor(isPaused ? pausedTextColor : .white)
         .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 6)
-        .background(
-            pillShape
-                .fill(isPaused ? pausedFillColor : stateColor)
-                .overlay(pillShape.strokeBorder(configuration.taskAccentColor, lineWidth: isPaused ? 2 : 0))
-                .shadow(color: CursorPalette.pillShadowColor.opacity(0.2), radius: 9, x: 0, y: 6)
-        )
+        .background {
+            if drawsPillBackground {
+                pillShape
+                    .fill(isPaused ? pausedFillColor : stateColor)
+                    .overlay(pillShape.strokeBorder(configuration.taskAccentColor, lineWidth: isPaused ? 2 : 0))
+                    .shadow(color: CursorPillChrome.shadowColor, radius: CursorPillChrome.shadowRadius,
+                            x: 0, y: CursorPillChrome.shadowOffsetY)
+            }
+        }
         .fixedSize()
-        .animation(reducesMotion ? nil : .easeInOut(duration: 0.2), value: appearance.activity)
+        .animation(DesignSystem.Motion.animation(DesignSystem.Motion.resize, reducesMotion: reducesMotion), value: resizingContent)
         .keyframeAnimator(initialValue: CursorPillNudge(), trigger: appearance.attentionNudgeCount) { nudgedPill, pillNudge in
             nudgedPill
                 .scaleEffect(reducesMotion ? 1 : pillNudge.scale, anchor: .topLeading)
@@ -107,6 +130,26 @@ private struct CursorTypingCaret: View {
     }
 }
 
+/// The pill's fill shape and shadow, shared with the command pill's morph, whose capsule ends exactly as the pill
+/// is drawn so the real pill can take its place without a visible change. In the pill's own points, before the
+/// cursor's scale.
+enum CursorPillChrome {
+    static let cornerRadius: CGFloat = 15
+    static let shadowColor = CursorPalette.pillShadowColor.opacity(0.2)
+    static let shadowRadius: CGFloat = 9
+    static let shadowOffsetY: CGFloat = 6
+}
+
+private struct CursorPillResizingContent: Equatable {
+    var activity: CursorActivity
+    var pillText: String
+    var decisionOptions: [UserDecisionOption]
+    var showsText: Bool
+    var offersPause: Bool
+    var offersStop: Bool
+    var offersChecklistToggle: Bool
+}
+
 private struct CursorPillNudge {
     var verticalOffset: CGFloat = 0
     var scale: CGFloat = 1
@@ -117,6 +160,10 @@ struct DecisionPill: View {
     @ObservedObject var viewModel: CursorViewModel
     let onDecisionOptionChosen: DecisionOptionHandler
     let onToggleChecklist: () -> Void
+    /// The corner the cursor's scale grows the pill from: the corner that faces the cursor's tip, so that corner is
+    /// where the pill's layout puts it.
+    var scaleAnchor: UnitPoint = .topLeading
+    var drawsPillBackground: Bool = true
 
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
 
@@ -127,8 +174,9 @@ struct DecisionPill: View {
             appearance: pillAppearance, configuration: viewModel.styleConfiguration,
             reducesMotion: viewModel.styleConfiguration.reducesMotion(systemReduceMotion: systemReduceMotion),
             onPillDecision: viewModel.decisionHandlerForDisplayedQuestion(onDecisionOptionChosen),
-            onToggleChecklist: onToggleChecklist, checklistIsOpen: viewModel.checklistIsOpen)
-        .scaleEffect(CGFloat(viewModel.styleConfiguration.cursorScale), anchor: .topLeading)
+            onToggleChecklist: onToggleChecklist, checklistIsOpen: viewModel.checklistIsOpen,
+            drawsPillBackground: drawsPillBackground)
+        .scaleEffect(CGFloat(viewModel.styleConfiguration.cursorScale), anchor: scaleAnchor)
     }
 }
 

@@ -28,6 +28,12 @@ final class CursorViewModel: ObservableObject {
     @Published var screenVisibleFramesInTopLeftGlobalPoints: [CGRect] = []
     @Published var targetWindowOriginInTopLeftGlobalPoints: CGPoint = .zero
     @Published var parkedTipInTopLeftGlobalPoints: CGPoint = .zero
+    /// The corner of the clickable pill panel the pill is drawn in: the one that faces the cursor's tip.
+    @Published var pillPanelHorizontalSide: PillHorizontalSide = .rightOfTip
+    @Published var pillPanelVerticalSide: PillVerticalSide = .belowTip
+    /// True for the one update in which the clickable pill takes over from the command pill's morph: that pill must
+    /// appear exactly as the morph ended, not animate into place.
+    @Published var pillAnimationsAreSuppressed = false
 
     /// The answers the pill shows compactly. Stop is left out here: it is the pill's own trailing button
     /// (`appearance.offersStop`) for the whole run, not only while a question is up.
@@ -171,8 +177,11 @@ final class CursorController: CursorPresenting {
     // MARK: - Planning
 
     /// Brings the cursor up where the user summoned Dotto, reading the target app, with Stop in its pill. There is no
-    /// target window yet, so the cursor is parked at that point until the run adopts one.
-    func beginPlanning(atSummonOriginInTopLeftGlobalPoints summonOrigin: CGPoint, targetApplicationName: String) {
+    /// target window yet, so the cursor is parked at that point until the run adopts one. A command submitted from the
+    /// pill at the pointer hands over its capsule: the status pill takes its place, and with `holdsStatusPillForMorph`
+    /// it stays out until the command pill has morphed into it (`finishCommandPillHandoff`).
+    func beginPlanning(atSummonOriginInTopLeftGlobalPoints summonOrigin: CGPoint, targetApplicationName: String,
+                       commandPillHandoff: CommandPillHandoff? = nil, holdsStatusPillForMorph: Bool = false) {
         hideAfterRunFinishedTask?.cancel()
         hideAfterRunFinishedTask = nil
         owningRunAbortSignal = nil
@@ -188,7 +197,18 @@ final class CursorController: CursorPresenting {
         viewModel.itemPosition = nil
         viewModel.itemCount = nil
         viewModel.isCollapsed = false
+        surfaces.beginCommandPillHandoff(commandPillHandoff, holdsPillPanel: holdsStatusPillForMorph)
         handle(.planningStarted(targetApplicationName: targetApplicationName))
+    }
+
+    /// Where the held status pill will appear, in top-left global points: what the command pill morphs into.
+    var heldStatusPillFrameForCommandPillHandoff: CGRect? {
+        surfaces.heldPillFrameForCommandPillHandoff
+    }
+
+    /// The morph is over (or was cut short): the status pill panel shows now, in the same turn the morph goes away.
+    func finishCommandPillHandoff() {
+        surfaces.finishCommandPillHandoff(targetWindow: targetWindow)
     }
 
     func showPlanningProgress(_ planningProgress: ChecklistPlanningProgress) {

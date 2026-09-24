@@ -104,6 +104,11 @@ final class RoutineReplayEngine {
                 case .typeText(let textTemplate, let replaceExistingText, let pressReturnAfter):
                     agentAction = .typeText(elementIdentifier: resolvedNode?.elementIdentifier, text: try render(textTemplate),
                                             replaceExistingText: replaceExistingText, pressReturnAfter: pressReturnAfter)
+                case .replaceText(let findTemplate, let replacementTemplate, let occurrence, let insertionPosition):
+                    guard let resolvedNode else { return fallback(atStep: stepIndex, "The text edit step has no recorded target.") }
+                    agentAction = .replaceText(elementIdentifier: resolvedNode.elementIdentifier, findText: try render(findTemplate),
+                                               replacementText: try render(replacementTemplate), occurrence: occurrence,
+                                               insertionPosition: insertionPosition)
                 case .pressKey(let keyName, let modifiers):
                     agentAction = .pressKey(keyName: keyName, modifiers: modifiers)
                 case .uploadFiles(let filePathTemplates):
@@ -163,6 +168,10 @@ final class RoutineReplayEngine {
                     progress.performedUserConfirmedAction = true
                 }
                 if case .typeText(_, let typedText, _, _) = agentAction { auditLogWriter.registerTypedTextForRedaction(typedText) }
+                if case .replaceText(_, let findText, let replacementText, _, _) = agentAction {
+                    auditLogWriter.registerTypedTextForRedaction(findText)
+                    auditLogWriter.registerTypedTextForRedaction(replacementText)
+                }
                 await observer.taskExecutionDidReportProgress(itemIdentifier: item.itemIdentifier, progressDescription: "Replaying: \(stepDescription)")
                 auditLogWriter.append(eventKind: .replayStep, itemIdentifier: item.itemIdentifier, message: stepDescription,
                                       details: ["step": String(stepIndex + 1), "routine": routine.routineIdentifier])

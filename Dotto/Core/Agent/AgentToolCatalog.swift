@@ -5,8 +5,8 @@ enum AgentToolCatalog {
     static let plannerTools: [ClaudeToolDefinition] = [readUserInterfaceTool, screenshotTool, askUserTool, submitPlanTool]
         + directRoutePlannerTools
     static let executorTools: [ClaudeToolDefinition] = [readUserInterfaceTool, screenshotTool, clickTool, typeTextTool,
-                                                        pressKeyTool, scrollTool, clickPointTool, uploadFilesTool, waitForTool,
-                                                        finishItemTool]
+                                                        replaceTextTool, pressKeyTool, scrollTool, clickPointTool, uploadFilesTool,
+                                                        waitForTool, finishItemTool]
     static let routineCompilerTools: [ClaudeToolDefinition] = [submitRoutineTool]
 
     // Descriptions and schemas are part of the cached prompt prefix: never interpolate runtime values into them.
@@ -86,6 +86,21 @@ enum AgentToolCatalog {
           "press_return_after":{"type":"boolean"},
           \#(expectSchemaFragment)},
          "required":["element_id","text","replace_existing_text","press_return_after","expect"]}
+        """#)
+
+    /// Not strict: every strict schema in a request joins one compiled grammar, and the executor's set is at its limit.
+    private static let replaceTextTool = makeNonStrictTool(.replaceText,
+        description: "Edit part of a text field's or text area's text in the background, without a caret, clicks or keys. find is the exact current text to replace (case-sensitive, copied from the field's value); occurrence first or all. To insert, give an empty find and position start or end of the field's text. position is at_find whenever find is not empty. The result includes a fresh outline.",
+        inputSchemaJSONText: #"""
+        {"type":"object","additionalProperties":false,
+         "properties":{
+          "element_id":{"type":"string","description":"Id like e42 of a text field, text area or combo box from the latest outline."},
+          "find":{"type":"string","description":"The exact existing text to replace; empty to insert at position."},
+          "replace_with":{"type":"string","description":"The new text; empty to delete what find matched."},
+          "occurrence":{"type":"string","enum":["first","all"]},
+          "position":{"type":"string","enum":["at_find","start","end"],"description":"at_find when find is not empty; start or end of the field's text when find is empty."},
+          \#(expectSchemaFragment)},
+         "required":["element_id","find","replace_with","occurrence","position","expect"]}
         """#)
 
     private static let pressKeyTool = makeStrictTool(.pressKey,

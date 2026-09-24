@@ -164,7 +164,7 @@ struct UserTakeoverDetector: Sendable {
             let canonicalKeyName = SafetyGate.canonicalKeyName(keyName)
             if canonicalKeyName == "escape" || canonicalKeyName == "return" { return true }
             return modifiers.contains(.command) && (canonicalKeyName == "w" || canonicalKeyName == "m")
-        case .scroll, .uploadFiles:
+        case .scroll, .uploadFiles, .replaceText:
             return false
         }
     }

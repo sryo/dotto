@@ -20,7 +20,8 @@ final class CursorOverlayWindow: DottoPanel {
 /// - the overlay over the target window while it is visible;
 /// - the live view, a floating, draggable panel that streams the covered target window with the cursor drawn at the
 ///   same window-relative point, and docks the decision pill to its edge when Dotto needs the user;
-/// - the small clickable panel the pill moves into, beside the parked or overlay cursor, when it carries buttons.
+/// - the clickable panel the pill moves into, beside the parked or overlay cursor, when it carries buttons. It keeps
+///   one size, enough for the largest pill, so the pill can resize inside it on a spring; only the pill takes clicks.
 ///
 /// Every hosting view here is sized only by its panel (`sizedOnlyByItsPanel`); the pill and the live view report
 /// their content size, and frames change outside SwiftUI's update (`DeferredPanelFrameApplier`).
@@ -30,6 +31,8 @@ final class CursorSurfaces {
     /// on every side, because near an edge of the screen the pill flips to the left of or above the tip.
     private static let overlayOutsets = NSEdgeInsets(top: 120, left: 440, bottom: 120, right: 440)
     private static let pillPanelShadowPadding: CGFloat = 14
+    /// Only if the pill hasn't reported its size yet, in the pill's own points.
+    private static let fallbackPillSize = CGSize(width: 180, height: CursorPillView.estimatedSingleLineHeight)
     private static let screenEdgeInset: CGFloat = 16
     /// Around the tip, the room the largest ring and its text take (the reading ring's text runs up to 38 points out).
     private static let cursorRingClearance: CGFloat = 40
@@ -44,8 +47,9 @@ final class CursorSurfaces {
     private lazy var parkedCursorWindow = makeParkedCursorWindow()
     private lazy var pillPanel = makePillPanel()
     private lazy var pillPanelFrameApplier = DeferredPanelFrameApplier(panel: pillPanel)
+    /// Reports the pill's own size, before the cursor's scale and without the panel's shadow padding.
     private let pillContentSizeBox = PanelContentSizeBox()
-    private var pillHostingView: NSHostingView<AnyView>?
+    private var pillHostingView: PillPanelHostingView?
     private let pillPlacementCalculator = PillPlacementCalculator()
     /// Keeps the pill on the side it flipped to while it still fits there, so it doesn't jump as its text changes.
     private var latestPillPanelPlacement: PillPlacement?
@@ -62,6 +66,14 @@ final class CursorSurfaces {
     /// The last frame Dotto gave the live view; a move to any other frame is the user dragging it.
     private var liveViewPanelFrameSetByThisApp: CGRect?
     private var liveViewPanelMoveObserver: NSObjectProtocol?
+    /// The command pill's capsule the parked pill took the place of, when the task was submitted from the pill at the
+    /// pointer: while the cursor stays parked, its pill keeps the capsule's tip-facing edge and vertical center.
+    private(set) var parkedPillCommandPillHandoff: CommandPillHandoff?
+    /// While the command pill morphs into the status pill, the pill panel is placed but not shown; the morph ends by
+    /// showing it (`finishCommandPillHandoff`), so the two never show at once.
+    private var holdsPillPanelForCommandPillHandoff = false
+    /// Set only while the pill panel is shown in the morph's place: it appears at once instead of fading in.
+    private var pillPanelTakesOverFromMorph = false
 
     init(viewModel: CursorViewModel, onDecisionOptionChosen: @escaping DecisionOptionHandler,
          onToggleLiveViewCollapsed: @escaping () -> Void, onToggleChecklist: @escaping () -> Void) {
@@ -81,9 +93,43 @@ final class CursorSurfaces {
 
     // MARK: - Switching
 
+    /// Set before the parked cursor first shows; `holdsPillPanel` keeps the pill panel out until the morph finishes.
+    func beginCommandPillHandoff(_ commandPillHandoff: CommandPillHandoff?, holdsPillPanel: Bool) {
+        parkedPillCommandPillHandoff = commandPillHandoff
+        holdsPillPanelForCommandPillHandoff = commandPillHandoff != nil && holdsPillPanel
+        latestPillPanelPlacement = nil
+    }
+
+    /// The pill's own frame (without the panel's shadow padding) while the pill panel is held for the handoff, in
+    /// top-left global points; nil when nothing is held or the pill isn't placed.
+    var heldPillFrameForCommandPillHandoff: CGRect? {
+        guard holdsPillPanelForCommandPillHandoff, viewModel.pillIsClickable else { return nil }
+        return latestPillPanelPlacement?.pillFrame
+    }
+
+    /// The morph's last frame is drawn exactly as the pill is, so the pill shows in its place with its animations
+    /// off for that first update, and the swap can't be seen.
+    func finishCommandPillHandoff(targetWindow: TargetWindowReference?) {
+        guard holdsPillPanelForCommandPillHandoff else { return }
+        holdsPillPanelForCommandPillHandoff = false
+        viewModel.pillAnimationsAreSuppressed = true
+        pillHostingView?.layoutSubtreeIfNeeded()
+        pillPanelTakesOverFromMorph = true
+        refreshPillPanel(targetWindow: targetWindow)
+        pillPanelTakesOverFromMorph = false
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated { self?.viewModel.pillAnimationsAreSuppressed = false }
+        }
+    }
+
     func show(_ surface: CursorSurface, targetWindow: TargetWindowReference?, parkedTipInTopLeftGlobalPoints: CGPoint?,
               reducesMotion: Bool) {
         let surfaceChanged = surface != shownSurface
+        if surface != .parkedAtSummonOrigin {
+            // Away from the summon point the pill hangs from the tip the usual way, and nothing is held back.
+            parkedPillCommandPillHandoff = nil
+            holdsPillPanelForCommandPillHandoff = false
+        }
         shownSurface = surface
         shownTargetWindow = targetWindow
         self.parkedTipInTopLeftGlobalPoints = parkedTipInTopLeftGlobalPoints
@@ -91,7 +137,11 @@ final class CursorSurfaces {
         case .parkedAtSummonOrigin:
             guard let parkedTipInTopLeftGlobalPoints else { return }
             positionParkedCursorWindow(atTopLeftGlobalPoint: parkedTipInTopLeftGlobalPoints)
-            fadeIn(parkedCursorWindow, reducesMotion: reducesMotion)
+            // Summoned from the command pill, the cursor arrives together with the pill's morph, over the same time.
+            fadeIn(parkedCursorWindow, reducesMotion: reducesMotion,
+                   durationSeconds: holdsPillPanelForCommandPillHandoff
+                       ? CommandPillMorphTimeline.standard.incomingContentFadeEndSeconds
+                       : DesignSystem.Motion.windowFadeInDurationSeconds)
             if surfaceChanged {
                 fadeOut(overlayWindow, reducesMotion: reducesMotion)
                 fadeOut(liveViewPanel, reducesMotion: reducesMotion)
@@ -122,7 +172,7 @@ final class CursorSurfaces {
     }
 
     /// A pill with buttons (Stop while planning or running, answers while Dotto waits for the user) can't be drawn by
-    /// the overlay, which can't take clicks without blocking the target app, so it is drawn by its own small clickable
+    /// the overlay, which can't take clicks without blocking the target app, so it is drawn by its own clickable
     /// panel at the same spot. While the cursor flies only the panel's origin changes.
     func refreshPillPanel(targetWindow: TargetWindowReference?) {
         guard viewModel.pillIsClickable, let tipInAppKitPoints = cursorTipInAppKitPoints(targetWindow: targetWindow) else {
@@ -132,13 +182,20 @@ final class CursorSurfaces {
             return
         }
         pillPanelFrameApplier.applyFrameNow(pillPanelFrame(forTipInAppKitPoints: tipInAppKitPoints,
-                                                           pillPanelSize: measuredPillPanelSize()))
+                                                           pillSize: measuredPillSize()))
         // Parked, the cursor floats above the user's windows, and so does its pill; over the target window both sit
         // just above that window.
         let pillPanelLevel: NSWindow.Level = shownSurface == .parkedAtSummonOrigin ? .floating : .normal
         if pillPanel.level != pillPanelLevel { pillPanel.level = pillPanelLevel }
+        guard !holdsPillPanelForCommandPillHandoff else { return }
         if !pillPanel.isVisible {
-            pillPanel.orderFrontRegardless()
+            if pillPanelTakesOverFromMorph {
+                pillPanel.alphaValue = 1
+                pillPanel.orderFrontRegardless()
+            } else {
+                fadeIn(pillPanel, reducesMotion: viewModel.styleConfiguration.reducesMotion(
+                    systemReduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion))
+            }
         }
         let windowBelowPill = shownSurface == .parkedAtSummonOrigin ? parkedCursorWindow : overlayWindow
         pillPanel.order(.above, relativeTo: windowBelowPill.windowNumber)
@@ -153,9 +210,8 @@ final class CursorSurfaces {
             let ringClearance = Self.cursorRingClearance * cursorScale
             var keepClearFrame = CGRect(x: tipPoint.x - ringClearance, y: tipPoint.y - ringClearance,
                                         width: ringClearance * 2, height: ringClearance * 2)
-            if pillPanel.isVisible {
-                let pillFrame = ScreenGeometry.topLeftGlobalFrame(fromAppKitFrame: pillPanel.frame)
-                keepClearFrame = keepClearFrame.union(pillFrame.insetBy(dx: Self.pillPanelShadowPadding, dy: Self.pillPanelShadowPadding))
+            if pillPanel.isVisible, let placedPillFrame = latestPillPanelPlacement?.pillFrame {
+                keepClearFrame = keepClearFrame.union(placedPillFrame)
             } else {
                 let pillOffsetFromTip = viewModel.appearance.activity.pillOffsetFromTip
                 keepClearFrame = keepClearFrame.union(CGRect(
@@ -260,50 +316,85 @@ final class CursorSurfaces {
 
     private func makePillPanel() -> NonActivatingClickablePanel {
         let pillPanel = NonActivatingClickablePanel(contentRect: NSRect(x: 0, y: 0, width: 240, height: 44), level: .normal)
-        let hostingView = FirstMouseHostingView(rootView: AnyView(DecisionPill(
-            viewModel: viewModel, onDecisionOptionChosen: onDecisionOptionChosen, onToggleChecklist: onToggleChecklist
-        ).padding(Self.pillPanelShadowPadding).fixedSize().reportingPanelContentSize(to: pillContentSizeBox)))
-            .withClearBackground().sizedOnlyByItsPanel()
+        // It takes over from the command pill's morph in one frame; a system fade would show both at once.
+        pillPanel.animationBehavior = .none
+        let hostingView = PillPanelHostingView(rootView: AnyView(PillPanelContentView(
+            viewModel: viewModel, onDecisionOptionChosen: onDecisionOptionChosen, onToggleChecklist: onToggleChecklist,
+            pillContentSizeBox: pillContentSizeBox, shadowPadding: pillPanelLayout.shadowPadding
+        ))).withClearBackground().sizedOnlyByItsPanel()
+        // The panel is larger than the pill: the window server already passes clicks on its transparent pixels to the
+        // window behind, and the rest (the shadow's faint pixels) reaches no view, so only the pill takes clicks.
+        hostingView.clickableFrameInPanel = { [weak self] in self?.pillFrameInPanel() }
         pillPanel.contentView = hostingView
         pillHostingView = hostingView
-        // The pill's text or buttons changed size on their own (a nudge, the quiet style fading its text): follow on
-        // a later turn of the run loop, never from inside SwiftUI's update.
+        // The pill's text or buttons changed its size: it resizes inside the fixed panel on its own spring, and the
+        // panel only moves if the pill's corner did (a flip, or a pill centered on the command pill's capsule), on a
+        // later turn of the run loop, never from inside SwiftUI's update.
         pillContentSizeBox.onContentSizeChange = { [weak self] _ in
             guard let self else { return }
             self.pillPanelFrameApplier.scheduleFrameUpdate { [weak self] in
                 guard let self, self.viewModel.pillIsClickable,
                       let tipInAppKitPoints = self.cursorTipInAppKitPoints(targetWindow: self.shownTargetWindow) else { return nil }
-                return self.pillPanelFrame(forTipInAppKitPoints: tipInAppKitPoints,
-                                           pillPanelSize: self.pillContentSizeBox.latestContentSize)
+                return self.pillPanelFrame(forTipInAppKitPoints: tipInAppKitPoints, pillSize: self.measuredPillSize())
             }
         }
         return pillPanel
     }
 
-    private func measuredPillPanelSize() -> CGSize {
+    /// The pill's largest size on screen, and room for its shadow (which the cursor's scale enlarges too).
+    private var pillPanelLayout: PillPanelLayout {
+        PillPanelLayout(maximumPillSize: CGSize(width: CursorPillView.maximumPillSizeInPanel.width * cursorScale,
+                                                height: CursorPillView.maximumPillSizeInPanel.height * cursorScale),
+                        shadowPadding: Self.pillPanelShadowPadding * max(1, cursorScale))
+    }
+
+    /// As drawn on screen, after the cursor's scale.
+    private func measuredPillSize() -> CGSize {
         let reportedSize = pillHostingView?.laidOutContentSize(reportedTo: pillContentSizeBox) ?? .zero
-        return reportedSize.width > 0 && reportedSize.height > 0 ? reportedSize : CGSize(width: 240, height: 44)
+        let pillSize = reportedSize.width > 0 && reportedSize.height > 0 ? reportedSize : Self.fallbackPillSize
+        return CGSize(width: pillSize.width * cursorScale, height: pillSize.height * cursorScale)
+    }
+
+    /// Where the pill is drawn in its panel, in the panel's top-left points; nil while it isn't placed.
+    private func pillFrameInPanel() -> CGRect? {
+        guard let latestPillPanelPlacement else { return nil }
+        return pillPanelLayout.pillFrameInPanel(pillSize: latestPillPanelPlacement.pillFrame.size,
+                                                horizontalSide: latestPillPanelPlacement.horizontalSide,
+                                                verticalSide: latestPillPanelPlacement.verticalSide,
+                                                panelSize: pillPanel.frame.size)
     }
 
     /// Beside the tip, flipped left of or above it near an edge of the tip's screen, recomputed on every cursor move
-    /// and every change of the pill's size (it grows, then wraps to two lines with its buttons below).
-    private func pillPanelFrame(forTipInAppKitPoints tipInAppKitPoints: CGPoint, pillPanelSize: CGSize) -> CGRect {
+    /// and every change of the pill's size. The panel's frame follows the pill's tip-facing corner only.
+    private func pillPanelFrame(forTipInAppKitPoints tipInAppKitPoints: CGPoint, pillSize visiblePillSize: CGSize) -> CGRect {
         let tipPoint = ScreenGeometry.topLeftGlobalPoint(fromAppKitPoint: tipInAppKitPoints)
         let pillOffsetFromTip = viewModel.appearance.activity.pillOffsetFromTip
-        let shadowPadding = Self.pillPanelShadowPadding
-        // The pill is drawn scaled from its top-left corner, inside the panel's shadow padding.
-        let visiblePillSize = CGSize(width: max(0, pillPanelSize.width - shadowPadding * 2) * cursorScale,
-                                     height: max(0, pillPanelSize.height - shadowPadding * 2) * cursorScale)
+        var preferredOffsetFromTip = CGSize(width: pillOffsetFromTip.width * cursorScale, height: pillOffsetFromTip.height * cursorScale)
+        var previousPlacement = latestPillPanelPlacement
+        if shownSurface == .parkedAtSummonOrigin, let parkedPillCommandPillHandoff {
+            preferredOffsetFromTip = parkedPillCommandPillHandoff.preferredOffsetFromTip(forStatusPillSize: visiblePillSize, tipPoint: tipPoint)
+            previousPlacement = previousPlacement ?? parkedPillCommandPillHandoff.sidesPlacement
+        }
         let pillPlacement = pillPlacementCalculator.placement(
-            forPillSize: visiblePillSize, tipPoint: tipPoint,
-            preferredOffsetFromTip: CGSize(width: pillOffsetFromTip.width * cursorScale, height: pillOffsetFromTip.height * cursorScale),
+            forPillSize: visiblePillSize, tipPoint: tipPoint, preferredOffsetFromTip: preferredOffsetFromTip,
             visibleFrame: ScreenGeometry.visibleFrameInTopLeftGlobalPoints(nearestToTopLeftGlobalPoint: tipPoint),
-            previousPlacement: latestPillPanelPlacement)
+            previousPlacement: previousPlacement)
         latestPillPanelPlacement = pillPlacement
-        let pillPanelFrameInTopLeftGlobalPoints = CGRect(x: pillPlacement.pillFrame.minX - shadowPadding,
-                                                         y: pillPlacement.pillFrame.minY - shadowPadding,
-                                                         width: pillPanelSize.width, height: pillPanelSize.height)
-        return ScreenGeometry.appKitFrame(fromTopLeftGlobalFrame: pillPanelFrameInTopLeftGlobalPoints)
+        publishPillCornerInPanel(horizontalSide: pillPlacement.horizontalSide, verticalSide: pillPlacement.verticalSide)
+        return ScreenGeometry.appKitFrame(fromTopLeftGlobalFrame: pillPanelLayout.panelFrame(for: pillPlacement))
+    }
+
+    /// A flip moves the pill to another corner of its panel in the same frame the panel moves, with no animation, so
+    /// the pill stays put on screen.
+    private func publishPillCornerInPanel(horizontalSide: PillHorizontalSide, verticalSide: PillVerticalSide) {
+        guard viewModel.pillPanelHorizontalSide != horizontalSide || viewModel.pillPanelVerticalSide != verticalSide else { return }
+        var cornerChangeTransaction = Transaction()
+        cornerChangeTransaction.disablesAnimations = true
+        withTransaction(cornerChangeTransaction) {
+            viewModel.pillPanelHorizontalSide = horizontalSide
+            viewModel.pillPanelVerticalSide = verticalSide
+        }
+        pillHostingView?.layoutSubtreeIfNeeded()
     }
 
     // MARK: - Live view
@@ -377,7 +468,8 @@ final class CursorSurfaces {
 
     // MARK: - Fading
 
-    private func fadeIn(_ window: NSWindow, reducesMotion: Bool) {
+    private func fadeIn(_ window: NSWindow, reducesMotion: Bool,
+                        durationSeconds: Double = DesignSystem.Motion.windowFadeInDurationSeconds) {
         guard !window.isVisible || window.alphaValue < 1 else { return }
         if !window.isVisible {
             window.alphaValue = reducesMotion ? 1 : 0
@@ -388,7 +480,8 @@ final class CursorSurfaces {
             return
         }
         NSAnimationContext.runAnimationGroup { animationContext in
-            animationContext.duration = 0.2
+            animationContext.duration = durationSeconds
+            animationContext.timingFunction = DesignSystem.Motion.windowFadeTimingFunction
             window.animator().alphaValue = 1
         }
     }
@@ -400,7 +493,8 @@ final class CursorSurfaces {
             return
         }
         NSAnimationContext.runAnimationGroup({ animationContext in
-            animationContext.duration = 0.2
+            animationContext.duration = DesignSystem.Motion.disappearDurationSeconds
+            animationContext.timingFunction = DesignSystem.Motion.windowFadeTimingFunction
             window.animator().alphaValue = 0
         }, completionHandler: { [weak self, weak window] in
             MainActor.assumeIsolated {
@@ -412,6 +506,55 @@ final class CursorSurfaces {
                 if !windowIsWanted { window.orderOut(nil) }
             }
         })
+    }
+}
+
+// MARK: - Pill panel content
+
+/// The clickable pill in its fixed panel, drawn in the corner that faces the cursor's tip so that corner stays put
+/// while the pill resizes.
+private struct PillPanelContentView: View {
+    @ObservedObject var viewModel: CursorViewModel
+    let onDecisionOptionChosen: DecisionOptionHandler
+    let onToggleChecklist: () -> Void
+    let pillContentSizeBox: PanelContentSizeBox
+    let shadowPadding: CGFloat
+
+    var body: some View {
+        let pillAlignment = Alignment(
+            horizontal: viewModel.pillPanelHorizontalSide == .rightOfTip ? .leading : .trailing,
+            vertical: viewModel.pillPanelVerticalSide == .belowTip ? .top : .bottom)
+        let pillScaleAnchor = UnitPoint(x: viewModel.pillPanelHorizontalSide == .rightOfTip ? 0 : 1,
+                                        y: viewModel.pillPanelVerticalSide == .belowTip ? 0 : 1)
+        DecisionPill(viewModel: viewModel, onDecisionOptionChosen: onDecisionOptionChosen, onToggleChecklist: onToggleChecklist,
+                     scaleAnchor: pillScaleAnchor)
+            .fixedSize()
+            .reportingPanelContentSize(to: pillContentSizeBox)
+            .padding(shadowPadding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: pillAlignment)
+            .transaction { pillTransaction in
+                if viewModel.pillAnimationsAreSuppressed {
+                    pillTransaction.disablesAnimations = true
+                    pillTransaction.animation = nil
+                }
+            }
+    }
+}
+
+/// Takes the first click like `FirstMouseHostingView`, and only where the pill is: the rest of the panel reaches no
+/// view.
+final class PillPanelHostingView: NSHostingView<AnyView> {
+    /// In the panel's top-left points (y grows downward).
+    var clickableFrameInPanel: (() -> CGRect?)?
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func hitTest(_ pointInSuperview: NSPoint) -> NSView? {
+        guard let clickableFrame = clickableFrameInPanel?() else { return nil }
+        let pointInThisView = convert(pointInSuperview, from: superview)
+        let pointFromTopLeft = CGPoint(x: pointInThisView.x, y: isFlipped ? pointInThisView.y : bounds.height - pointInThisView.y)
+        guard clickableFrame.contains(pointFromTopLeft) else { return nil }
+        return super.hitTest(pointInSuperview)
     }
 }
 

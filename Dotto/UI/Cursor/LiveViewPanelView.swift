@@ -45,7 +45,7 @@ struct LiveViewPanelView: View {
                 panelCard
             }
         }
-        .animation(reducesMotion ? nil : .spring(response: 0.38, dampingFraction: 0.62), value: showsDockedPill)
+        .animation(DesignSystem.Motion.animation(DesignSystem.Motion.appear, reducesMotion: reducesMotion), value: showsDockedPill)
         .keyframeAnimator(initialValue: CGFloat(0), trigger: viewModel.liveViewBounceCount) { bouncingPanel, verticalBounce in
             bouncingPanel.offset(y: verticalBounce)
         } keyframes: { _ in

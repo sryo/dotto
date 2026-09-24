@@ -9,9 +9,16 @@ enum RoutineLiteralInspector {
     /// Random base64/hex tokens sit around 4–6 bits per character; words and file names stay well below 3.5.
     private static let minimumHighEntropyBitsPerCharacter = 3.5
 
+    /// A text edit's find text is stored in the routine file too, so it is inspected like the text it puts in.
     static func typedLiteralLooksLikeSecret(in routineStepAction: RoutineStepAction) -> Bool {
-        guard case .typeText(let textTemplate, _, _) = routineStepAction else { return false }
-        return literalLooksLikeSecret(textTemplate)
+        switch routineStepAction {
+        case .typeText(let textTemplate, _, _):
+            return literalLooksLikeSecret(textTemplate)
+        case .replaceText(let findTemplate, let replacementTemplate, _, _):
+            return literalLooksLikeSecret(findTemplate) || literalLooksLikeSecret(replacementTemplate)
+        case .click, .pressKey, .waitForText, .uploadFiles:
+            return false
+        }
     }
 
     static func routineHasSecretLookingLiteral(_ routine: Routine) -> Bool {

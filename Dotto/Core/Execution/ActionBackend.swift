@@ -33,6 +33,8 @@ enum ActionBackendError: Error, Equatable, Sendable {
     case inputNotDelivered(String, foregroundAssistMayHelp: Bool)
     case foregroundAssistFailed(String)
     case uploadNotAllowed(String)
+    /// replace_text's `find` isn't in the field. The detail names the field and shows its text, both from the app.
+    case textToReplaceNotFound(String)
 
     static let inputNotDeliveredText = "Dotto's input didn't take effect in the app while it stayed in the background."
     static let pausedBeforeThisActionText = "The task was paused before this action ran and the user may have changed the UI. Read the UI again and repeat the action if it is still needed."
@@ -71,6 +73,9 @@ enum ActionBackendError: Error, Equatable, Sendable {
         case .uploadNotAllowed(let reason):
             // Dotto's own wording, naming files by basename only.
             return (reason, nil)
+        case .textToReplaceNotFound(let fieldDescriptionAndText):
+            return ("Nothing changed: the text in `find` isn't in that field. Matching is exact and case-sensitive, so copy "
+                        + "the text from the field's current value. The field and its text:", fieldDescriptionAndText)
         }
     }
 

@@ -66,6 +66,8 @@ enum AgentToolCallDecoder {
                                      text: try inputReader.requiredString("text"),
                                      replaceExistingText: try inputReader.requiredBool("replace_existing_text"),
                                      pressReturnAfter: try inputReader.requiredBool("press_return_after")))
+        case .replaceText:
+            return .action(try decodeReplaceTextAction(inputReader: inputReader))
         case .pressKey:
             let keyName = try inputReader.requiredString("key").trimmingCharacters(in: .whitespaces).lowercased()
             guard !keyName.isEmpty else {
@@ -107,6 +109,38 @@ enum AgentToolCallDecoder {
         case .listFolder, .readFileMetadata, .listShortcuts, .submitFileOperationsPlan, .submitScriptPlan, .submitShortcutPlan:
             return try decodeDirectRouteToolCall(toolName: toolName, inputReader: inputReader)
         }
+    }
+
+    /// replace_text is sent without a strict schema, so every field and the combinations between them are checked here.
+    private static func decodeReplaceTextAction(inputReader: ToolInputReader) throws -> AgentAction {
+        guard let elementIdentifier = try inputReader.optionalNonEmptyString("element_id") else {
+            throw AgentToolInputError(messageForModel: "Invalid input for replace_text: `element_id` must be an id like e42.")
+        }
+        let findText = try inputReader.requiredString("find")
+        let replacementText = try inputReader.requiredString("replace_with")
+        let occurrence: TextReplacementOccurrence = try inputReader.requiredEnum("occurrence")
+        let insertionPosition: TextInsertionPosition = try inputReader.requiredEnum("position")
+        if findText.isEmpty {
+            guard insertionPosition != .atFind else {
+                throw AgentToolInputError(messageForModel:
+                    "Invalid input for replace_text: with an empty `find`, `position` must be start or end.")
+            }
+            guard !replacementText.isEmpty else {
+                throw AgentToolInputError(messageForModel:
+                    "Invalid input for replace_text: `find` and `replace_with` are both empty, so there is nothing to change.")
+            }
+        } else {
+            guard insertionPosition == .atFind else {
+                throw AgentToolInputError(messageForModel:
+                    "Invalid input for replace_text: `position` must be at_find when `find` is not empty.")
+            }
+            guard findText != replacementText else {
+                throw AgentToolInputError(messageForModel:
+                    "Invalid input for replace_text: `replace_with` equals `find`, so nothing would change.")
+            }
+        }
+        return .replaceText(elementIdentifier: elementIdentifier, findText: findText, replacementText: replacementText,
+                            occurrence: occurrence, insertionPosition: insertionPosition)
     }
 
     /// nil for an absent or null field, kind none, empty text, or a malformed object: the action itself still runs.

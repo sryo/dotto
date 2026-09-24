@@ -53,6 +53,9 @@ struct RecordedElementContext: Codable, Equatable, Sendable {
 enum RoutineStepAction: Codable, Equatable, Sendable {
     case click(clickType: AgentClickType)
     case typeText(textTemplate: String, replaceExistingText: Bool, pressReturnAfter: Bool)
+    /// Always has a target locator: replace_text names its field.
+    case replaceText(findTemplate: String, replacementTemplate: String, occurrence: TextReplacementOccurrence,
+                     insertionPosition: TextInsertionPosition)
     case pressKey(keyName: String, modifiers: [AgentKeyModifier])
     case waitForText(textTemplate: String, timeoutSeconds: Int)
     /// Replay re-checks the rendered paths against the current task's upload allowlist.

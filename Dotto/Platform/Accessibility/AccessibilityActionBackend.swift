@@ -252,6 +252,9 @@ actor AccessibilityActionBackend: ActionBackend {
         case .typeText(let elementIdentifier, let text, let replaceExistingText, let pressReturnAfter):
             return try await typeText(text, intoElementWithIdentifier: elementIdentifier, replaceExistingText: replaceExistingText,
                                       pressReturnAfter: pressReturnAfter, context: context)
+        case .replaceText(let elementIdentifier, let findText, let replacementText, let occurrence, let insertionPosition):
+            return try await replaceText(findText, with: replacementText, occurrence: occurrence, insertionPosition: insertionPosition,
+                                         inElementWithIdentifier: elementIdentifier, context: context)
         case .pressKey(let keyName, let modifiers):
             return try await pressKey(keyName, modifiers: modifiers, context: context)
         case .scroll(let elementIdentifier, let direction, let pages):

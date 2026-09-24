@@ -74,14 +74,11 @@ extension CursorActivity {
         }
     }
 
-    /// Where the pill's top-left sits relative to the arrow tip, so the pill clears the activity's ring.
+    /// Where the pill's top-left sits relative to the arrow tip. One offset for every activity, clearing the largest
+    /// shape (the reading ring): the cursor morphs under a pill that stays put, instead of the pill and the checklist
+    /// hanging from it jumping at every state change.
     var pillOffsetFromTip: CGSize {
-        switch self {
-        case .reading: return CGSize(width: 40, height: 30)
-        case .thinking: return CGSize(width: 30, height: 24)
-        case .waiting, .done: return CGSize(width: 22, height: 12)
-        default: return CGSize(width: 18, height: 21)
-        }
+        CGSize(width: 40, height: 30)
     }
 }
 

@@ -46,7 +46,7 @@ enum ChecklistItemRetryPolicy {
         switch action {
         case .scroll:
             return false
-        case .typeText, .clickScreenshotPoint, .uploadFiles:
+        case .typeText, .replaceText, .clickScreenshotPoint, .uploadFiles:
             return true
         case .pressKey(let keyName, let modifiers):
             let modifiersBeyondShift = Set(modifiers).subtracting([.shift])

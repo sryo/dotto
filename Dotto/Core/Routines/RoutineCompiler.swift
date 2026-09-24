@@ -116,6 +116,11 @@ enum RoutineCompiler {
                 case .typeText(_, let text, let replaceExistingText, let pressReturnAfter):
                     stepAction = .typeText(textTemplate: RoutineTemplating.templatize(text, parameters: parameters),
                                            replaceExistingText: replaceExistingText, pressReturnAfter: pressReturnAfter)
+                case .replaceText(_, let findText, let replacementText, let occurrence, let insertionPosition):
+                    guard recordedStep.targetContext != nil else { return nil }
+                    stepAction = .replaceText(findTemplate: RoutineTemplating.templatize(findText, parameters: parameters),
+                                              replacementTemplate: RoutineTemplating.templatize(replacementText, parameters: parameters),
+                                              occurrence: occurrence, insertionPosition: insertionPosition)
                 case .pressKey(let keyName, let modifiers):
                     stepAction = .pressKey(keyName: keyName, modifiers: modifiers)
                 case .clickScreenshotPoint:
@@ -217,6 +222,9 @@ enum RoutineCompiler {
                     + locator.ancestorsNearestFirst.map(\.titleTemplate)
             } ?? []
             if case .typeText(let textTemplate, _, _) = step.action { stepTemplates.append(textTemplate) }
+            if case .replaceText(let findTemplate, let replacementTemplate, _, _) = step.action {
+                stepTemplates += [findTemplate, replacementTemplate]
+            }
             if case .waitForText(let textTemplate, _) = step.action { stepTemplates.append(textTemplate) }
             if case .uploadFiles(let filePathTemplates) = step.action { stepTemplates += filePathTemplates }
             return stepTemplates.contains(where: RoutineTemplating.containsPlaceholder)
@@ -232,6 +240,13 @@ enum RoutineCompiler {
         switch stepAction {
         case .click: return "Click \(targetName ?? "element")"
         case .typeText(let textTemplate, _, _): return "Type “\(textTemplate)”" + (targetName.map { " into \($0)" } ?? "")
+        case .replaceText(let findTemplate, let replacementTemplate, _, let insertionPosition):
+            let fieldName = targetName.map { " in \($0)" } ?? ""
+            switch insertionPosition {
+            case .atFind: return "Replace “\(findTemplate)” with “\(replacementTemplate)”" + fieldName
+            case .start: return "Add “\(replacementTemplate)” at the start" + fieldName
+            case .end: return "Add “\(replacementTemplate)” at the end" + fieldName
+            }
         case .pressKey(let keyName, let modifiers): return "Press " + (modifiers.map(\.rawValue) + [keyName]).joined(separator: "+")
         case .waitForText(let textTemplate, _): return "Wait for “\(textTemplate)”"
         case .uploadFiles(let filePathTemplates):

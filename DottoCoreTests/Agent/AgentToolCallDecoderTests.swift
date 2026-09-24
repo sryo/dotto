@@ -46,15 +46,15 @@ let agentToolCallDecoderTestSuite = CoreTestSuite(name: "AgentToolCallDecoder", 
                         ["read_ui", "screenshot", "ask_user", "submit_plan", "list_folder", "read_file_metadata", "list_shortcuts",
                          "submit_file_operations_plan", "submit_script_plan", "submit_shortcut_plan"])
         try expectEqual(AgentToolCatalog.executorTools.map(\.name),
-                        ["read_ui", "screenshot", "click", "type_text", "press_key", "scroll", "click_point", "upload_files", "wait_for",
-                         "finish_item"])
+                        ["read_ui", "screenshot", "click", "type_text", "replace_text", "press_key", "scroll", "click_point", "upload_files",
+                         "wait_for", "finish_item"])
         try expectEqual(AgentToolCatalog.routineCompilerTools.map(\.name), ["submit_routine"])
         let allCatalogNames = Set((AgentToolCatalog.plannerTools + AgentToolCatalog.executorTools
                                    + AgentToolCatalog.routineCompilerTools).map(\.name))
         try expectEqual(allCatalogNames, Set(AgentToolName.allCases.map(\.rawValue)))
     },
-    CoreTestCase(name: "every tool schema is strict-valid (object root, no extra properties, all properties required); only direct-route tools are sent non-strict") {
-        let nonStrictToolNames = Set(AgentToolCatalog.directRoutePlannerTools.map(\.name))
+    CoreTestCase(name: "every tool schema is strict-valid (object root, no extra properties, all properties required); only direct-route tools and replace_text are sent non-strict") {
+        let nonStrictToolNames = Set(AgentToolCatalog.directRoutePlannerTools.map(\.name) + [AgentToolName.replaceText.rawValue])
         for toolDefinition in AgentToolCatalog.plannerTools + AgentToolCatalog.executorTools + AgentToolCatalog.routineCompilerTools {
             try expectEqual(toolDefinition.isStrict, !nonStrictToolNames.contains(toolDefinition.name), toolDefinition.name)
             try expectTrue(!toolDefinition.description.isEmpty, "\(toolDefinition.name) needs a description")

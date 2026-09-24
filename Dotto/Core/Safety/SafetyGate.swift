@@ -28,7 +28,7 @@ enum SafetyGate {
                                focusedNode: AccessibilityElementNode? = nil,
                                targetApplicationBundleIdentifier: String? = nil,
                                uploadFileAllowlist: UploadFileAllowlist = .empty) -> SafetyVerdict {
-        if case .typeText = action, (targetNode ?? focusedNode)?.isSecureTextField == true {
+        if actionWritesText(action), (targetNode ?? focusedNode)?.isSecureTextField == true {
             return .deny(reasonForModel: "Typing into password fields is not allowed.")
         }
         guard case .requireUserConfirmation(let reason, let riskCategory) = applyingAskPolicy(unconfirmedActionVerdict(
@@ -46,9 +46,16 @@ enum SafetyGate {
     static func actionIsRiskyWithoutAnyGrant(_ action: AgentAction, targetNode: AccessibilityElementNode?,
                                              focusedNode: AccessibilityElementNode? = nil,
                                              targetApplicationBundleIdentifier: String? = nil) -> Bool {
-        if case .typeText = action, (targetNode ?? focusedNode)?.isSecureTextField == true { return true }
+        if actionWritesText(action), (targetNode ?? focusedNode)?.isSecureTextField == true { return true }
         return unconfirmedActionVerdict(action, targetNode: targetNode, focusedNode: focusedNode,
                                         targetApplicationBundleIdentifier: targetApplicationBundleIdentifier) != .allow
+    }
+
+    private static func actionWritesText(_ action: AgentAction) -> Bool {
+        switch action {
+        case .typeText, .replaceText: return true
+        case .clickElement, .pressKey, .scroll, .clickScreenshotPoint, .uploadFiles: return false
+        }
     }
 
     private static func unconfirmedActionVerdict(_ action: AgentAction, targetNode: AccessibilityElementNode?,
@@ -63,6 +70,18 @@ enum SafetyGate {
                                                     riskCategory: .sendingOrPublishing)
                 }
                 return returnVerdict(reason: "This step will type text and press Return, which often sends or submits.",
+                                     targetApplicationBundleIdentifier: targetApplicationBundleIdentifier)
+            }
+            return .allow
+
+        case .replaceText(_, _, let replacementText, _, _):
+            // A line break set into a field can submit it just like a typed Return, so it is classified the same way.
+            if replacementText.contains(where: \.isNewline) {
+                if applicationSendsOnPlainReturn(targetApplicationBundleIdentifier) {
+                    return .requireUserConfirmation(reason: "This step will put a line break into a message, which sends it in this app.",
+                                                    riskCategory: .sendingOrPublishing)
+                }
+                return returnVerdict(reason: "This step will put a line break into the text, which often sends or submits.",
                                      targetApplicationBundleIdentifier: targetApplicationBundleIdentifier)
             }
             return .allow
