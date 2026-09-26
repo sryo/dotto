@@ -76,7 +76,7 @@ extension TaskSessionController {
         }
         let auditLogWriter = taskStartResources.auditLogWriter
         let abortSignal = taskStartResources.abortSignal
-        let checklistPlanner = ChecklistPlanner(transport: claudeTransport, actionBackend: actionBackend, auditLogWriter: auditLogWriter,
+        let checklistPlanner = ChecklistPlanner(transport: claudeTransport, actionBackend: taskStartResources.actionBackend, auditLogWriter: auditLogWriter,
                                                 taskResourceBudget: taskStartResources.taskResourceBudget)
         checklistPlanner.uploadFileAllowlist = uploadFileAllowlist
         checklistPlanner.focusPolicy = currentTaskFocusPolicy

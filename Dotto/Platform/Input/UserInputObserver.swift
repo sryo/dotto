@@ -2,11 +2,15 @@ import AppKit
 
 /// Reports the user's real mouse and keyboard input while a task executes or a demonstration is recorded.
 /// A listen-only tap, because a listen-only tap can never hold up the system pointer while the main thread is
-/// busy.
+/// busy. Each running task and each recording holds a lease (`InputObservationLeases`); the one tap runs while any is
+/// held, so one task ending never switches off takeover detection or the real-input count for another.
 @MainActor final class UserInputObserver {
     var onUserInputObserved: ((ObservedUserInputEvent) -> Void)?
     nonisolated let realUserInputCounter = RealUserInputCounter()
 
+    private var observationLeases = InputObservationLeases()
+    /// What the tap that is running was created to see.
+    private var runningTapIncludesPointerMoves = false
     private var observationEventTap: CFMachPort?
     private var observationRunLoopSource: CFRunLoopSource?
     private var thisAppPointerEventMonitor: Any?
@@ -18,9 +22,45 @@ import AppKit
     private static let pointerEventMatchingWindowSeconds: TimeInterval = 1.0
     private static let pointerEventMatchingTolerancePoints: CGFloat = 0.5
 
-    /// Pointer moves never pause a run, so they are only observed while recording a demonstration.
-    @discardableResult func startObserving(includingPointerMoves: Bool = false) -> Bool {
-        if observationEventTap != nil { return true }
+    /// Pointer moves never pause a run, so they are only observed while a demonstration is being recorded.
+    @discardableResult func startObserving(holderIdentifier: String, includingPointerMoves: Bool = false) -> Bool {
+        observationLeases.take(holderIdentifier: holderIdentifier, includingPointerMoves: includingPointerMoves)
+        return applyObservationRequirement()
+    }
+
+    func stopObserving(holderIdentifier: String) {
+        observationLeases.end(holderIdentifier: holderIdentifier)
+        applyObservationRequirement()
+    }
+
+    /// At quit.
+    func stopObservingForEveryHolder() {
+        observationLeases.endAll()
+        applyObservationRequirement()
+    }
+
+    @discardableResult private func applyObservationRequirement() -> Bool {
+        switch observationLeases.requirement {
+        case .none:
+            stopTap()
+            return true
+        case .clicksScrollsAndKeys:
+            return runTap(includingPointerMoves: false)
+        case .includingPointerMoves:
+            return runTap(includingPointerMoves: true)
+        }
+    }
+
+    /// A tap that sees more than it needs is replaced, and one that sees less is recreated with the wider mask.
+    private func runTap(includingPointerMoves: Bool) -> Bool {
+        if observationEventTap != nil {
+            if runningTapIncludesPointerMoves == includingPointerMoves { return true }
+            stopTap()
+        }
+        return startTap(includingPointerMoves: includingPointerMoves)
+    }
+
+    private func startTap(includingPointerMoves: Bool) -> Bool {
         let observationTapCallback: CGEventTapCallBack = { _, eventType, event, userInfo in
             guard let userInfo else { return Unmanaged.passUnretained(event) }
             let userInputObserver = Unmanaged<UserInputObserver>.fromOpaque(userInfo).takeUnretainedValue()
@@ -48,6 +88,7 @@ import AppKit
         observationRunLoopSource = createdRunLoopSource
         CFRunLoopAddSource(CFRunLoopGetMain(), createdRunLoopSource, .commonModes)
         CGEvent.tapEnable(tap: createdEventTap, enable: true)
+        runningTapIncludesPointerMoves = includingPointerMoves
         realUserInputCounter.setObserving(true)
         startRecordingPointerEventsDeliveredToThisApp()
         return true
@@ -88,7 +129,7 @@ import AppKit
         }
     }
 
-    func stopObserving() {
+    private func stopTap() {
         realUserInputCounter.setObserving(false)
         if let thisAppPointerEventMonitor {
             NSEvent.removeMonitor(thisAppPointerEventMonitor)

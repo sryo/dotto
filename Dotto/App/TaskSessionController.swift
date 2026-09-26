@@ -4,7 +4,8 @@ import Combine
 struct TaskSessionControllerDependencies {
     var claudeTransport: ClaudeTransport
     var anthropicAPIKeyStore: AnthropicAPIKeyStore
-    var actionBackend: ActionBackend
+    /// A fresh backend for each task: its element ids, snapshot and held Accessibility modes are that task's alone.
+    var makeActionBackend: @MainActor () -> ActionBackend
     var keyboardMonitor: GlobalKeyboardMonitor
     var pointerMovementObserver: PointerMovementObserver
     var cursorController: CursorController
@@ -20,13 +21,14 @@ struct TaskSessionControllerDependencies {
     var directRouteExecutionDependencies: DirectRouteExecutionDependencies?
 }
 
-/// Everything a task owns from its first step on: its audit log, its Stop signal and the task-wide budget that
-/// planning, teaching and the run all draw on.
+/// Everything a task owns from its first step on: its audit log, its Stop signal, the task-wide budget that planning,
+/// teaching and the run all draw on, and its own action backend.
 struct TaskStartResources {
     var taskIdentifier: String
     var auditLogWriter: AuditLogWriter
     var abortSignal: TaskAbortSignal
     var taskResourceBudget: TaskResourceBudget
+    var actionBackend: ActionBackend
 }
 
 /// Composition-level coordinator for one task at a time: owns the task's `TaskSession`, drives the planner and
@@ -74,7 +76,7 @@ final class TaskSessionController: ObservableObject {
     @Published var isMenuBarIconPulsing = false
     let claudeTransport: ClaudeTransport
     let anthropicAPIKeyStore: AnthropicAPIKeyStore
-    let actionBackend: ActionBackend
+    let makeActionBackend: @MainActor () -> ActionBackend
     let userInputObserver: UserInputObserver
     let targetWindowObserver: TargetWindowObserver
     let automatedTargetActivityRelay: AutomatedTargetActivityRelay
@@ -111,7 +113,7 @@ final class TaskSessionController: ObservableObject {
     init(dependencies: TaskSessionControllerDependencies) {
         self.claudeTransport = dependencies.claudeTransport
         self.anthropicAPIKeyStore = dependencies.anthropicAPIKeyStore
-        self.actionBackend = dependencies.actionBackend
+        self.makeActionBackend = dependencies.makeActionBackend
         self.keyboardMonitor = dependencies.keyboardMonitor
         self.pointerMovementObserver = dependencies.pointerMovementObserver
         self.cursorController = dependencies.cursorController
@@ -197,6 +199,7 @@ final class TaskSessionController: ObservableObject {
         keyboardMonitor.stop()
         summonGestureController?.stop()
         stopRunObservers()
+        userInputObserver.stopObservingForEveryHolder()
         cursorController.putCursorAway()
         commandBarPanelController?.hideCommandBar()
         checklistPanelController?.hideChecklistPanel()
@@ -355,7 +358,7 @@ final class TaskSessionController: ObservableObject {
                                         "windowServerCapabilities": windowServerCapabilities.auditDescription]
                                   .merging(additionalAuditDetails) { _, additionalDetail in additionalDetail })
         return TaskStartResources(taskIdentifier: taskIdentifier, auditLogWriter: auditLogWriter, abortSignal: TaskAbortSignal(),
-                                  taskResourceBudget: TaskResourceBudget(safetyLimits: .standard))
+                                  taskResourceBudget: TaskResourceBudget(safetyLimits: .standard), actionBackend: makeActionBackend())
     }
 
     func adoptTaskStartResources(_ taskStartResources: TaskStartResources) {
@@ -363,6 +366,7 @@ final class TaskSessionController: ObservableObject {
         currentAuditLogFileURL = taskStartResources.auditLogWriter.logFileURL
         currentAbortSignal = taskStartResources.abortSignal
         currentTaskResourceBudget = taskStartResources.taskResourceBudget
+        currentSession.actionBackend = taskStartResources.actionBackend
     }
 
     func resetPerTaskResources() {
@@ -486,6 +490,7 @@ extension TaskSessionController {
         get { currentSession.frontmostApplicationProcessIdentifierWhenCommandWasSubmitted }
         set { currentSession.frontmostApplicationProcessIdentifierWhenCommandWasSubmitted = newValue }
     }
+    var actionBackend: ActionBackend? { currentSession.actionBackend }
     var currentChecklistPlanner: ChecklistPlanner? {
         get { currentSession.currentChecklistPlanner }
         set { currentSession.currentChecklistPlanner = newValue }

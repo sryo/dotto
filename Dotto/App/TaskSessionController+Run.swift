@@ -4,6 +4,7 @@ extension TaskSessionController {
     func approveChecklistAndRun() {
         guard case .awaitingApproval(let approvedChecklist) = sessionState,
               !approvedChecklist.includedItems.isEmpty,
+              let actionBackend,
               let auditLogWriter = currentAuditLogWriter,
               let abortSignal = currentAbortSignal,
               let taskResourceBudget = currentTaskResourceBudget else { return }
@@ -57,7 +58,7 @@ extension TaskSessionController {
         userTakeoverDetector.reset()
         targetWindowObserver.startObserving(executingChecklist.targetApplication)
         userTakeoverDetector.rebaselinePinnedTargetWindowFrame(targetWindowObserver.pinnedTargetWindowFrameInTopLeftGlobalPoints)
-        userInputObserver.startObserving(includingPointerMoves: false)
+        userInputObserver.startObserving(holderIdentifier: currentSession.runInputObservationHolderIdentifier)
         // A routine run skips planning, so nothing else has waited for a stopped run to release the backend.
         let previousRunTask = mostRecentlyStartedRunTask
         let pauseAwareActionBackend = actionBackend as? AccessibilityActionBackend
@@ -141,12 +142,13 @@ extension TaskSessionController {
         // The reply field or a label field may hold the keyboard; it goes back to the user's app first.
         checklistPanelController?.collapseIntoCursor()
         statusLine = TaskUserFacingMessages.readyStatusLine
-        resetPerTaskResources()
+        // Before the reset, which lets go of the task's backend.
         restoreTargetAccessibilityModesInBackground()
+        resetPerTaskResources()
     }
 
     func stopRunObservers() {
-        userInputObserver.stopObserving()
+        userInputObserver.stopObserving(holderIdentifier: currentSession.runInputObservationHolderIdentifier)
         targetWindowObserver.stopObserving()
         visibilityMonitor.stopMonitoring()
     }
@@ -158,8 +160,8 @@ extension TaskSessionController {
         foregroundAssistCountdownWasCancelled = true
     }
 
-    /// The backend restores the target's accessibility modes itself when a run finishes; this covers stops and
-    /// dismissals that happen before or around that point. Restoring twice is harmless.
+    /// The backend releases its target's accessibility modes itself when a run finishes; this covers stops and
+    /// dismissals that happen before or around that point. Releasing twice is harmless: a backend holds them once.
     private func restoreTargetAccessibilityModesInBackground() {
         guard let accessibilityActionBackend = actionBackend as? AccessibilityActionBackend else { return }
         Task { await accessibilityActionBackend.restoreTargetAccessibilityModes() }

@@ -7,6 +7,11 @@ import Combine
 /// several concurrent tasks (each in a different app) will each get.
 @MainActor
 final class TaskSession: ObservableObject {
+    /// Names this task's leases on shared observers (the user-input tap).
+    let sessionIdentifier = UUID().uuidString
+    var runInputObservationHolderIdentifier: String { "run-" + sessionIdentifier }
+    var demonstrationInputObservationHolderIdentifier: String { "demonstration-" + sessionIdentifier }
+
     @Published var sessionState: TaskSessionState = .idle {
         didSet { onSessionStateDidChange?() }
     }
@@ -52,6 +57,8 @@ final class TaskSession: ObservableObject {
     var frontmostApplicationProcessIdentifierWhenCommandWasSubmitted: pid_t?
     /// The task's planner, kept while it waits for the user's reply so the conversation can go on.
     var currentChecklistPlanner: ChecklistPlanner?
+    /// This task's own backend. A stopped task that is still unwinding keeps using the one it started with.
+    var actionBackend: ActionBackend?
 
     /// Called after every state change (the summon gesture re-checks whether it may observe the pointer).
     var onSessionStateDidChange: (() -> Void)?
@@ -71,6 +78,7 @@ final class TaskSession: ObservableObject {
         currentTaskFocusPolicy = taskFocusPolicyForNextTask
         currentTaskSummonOriginInTopLeftGlobalPoints = nil
         currentChecklistPlanner = nil
+        actionBackend = nil
         currentPlanningProgress = nil
         plannerConversationTranscript = PlannerConversationTranscript()
         userTakeoverDetector.reset()

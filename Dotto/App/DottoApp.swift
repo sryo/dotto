@@ -21,7 +21,8 @@ struct DottoApp: App {
 final class DottoAppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarPanelController: MenuBarPanelController?
     private var taskSessionController: TaskSessionController?
-    private var actionBackend: AccessibilityActionBackend?
+    /// Shared by every task's backend: one record of changed modes (and one crash-recovery file) for all apps.
+    private let accessibilityModes = TargetApplicationAccessibilityModes()
     private let displayReconfigurationObserver = DisplayReconfigurationObserver()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -47,23 +48,28 @@ final class DottoAppDelegate: NSObject, NSApplicationDelegate {
         let inputSynthesizer = InputSynthesizer(windowServerBridge: windowServerBridge)
         let userInputObserver = UserInputObserver()
         let automatedTargetActivityRelay = AutomatedTargetActivityRelay()
-        let actionBackend = AccessibilityActionBackend(
-            elementReader: elementReader,
-            inputSynthesizer: inputSynthesizer,
-            windowCapturer: windowCapturer,
-            windowServerBridge: windowServerBridge,
-            accessibilityModes: TargetApplicationAccessibilityModes(),
-            openPanelDriver: NativeOpenPanelDriver(inputSynthesizer: inputSynthesizer,
-                                                   realUserInputCounter: userInputObserver.realUserInputCounter),
-            cursorPresenter: cursorController,
-            automatedActivityRelay: automatedTargetActivityRelay
-        )
-        self.actionBackend = actionBackend
+        let accessibilityModes = self.accessibilityModes
+        let openPanelDriver = NativeOpenPanelDriver(inputSynthesizer: inputSynthesizer,
+                                                    realUserInputCounter: userInputObserver.realUserInputCounter)
+        // The reader, synthesizer, capturer and window-server bridge keep no per-task state, so every task's backend
+        // shares them.
+        let makeActionBackend: @MainActor () -> ActionBackend = {
+            AccessibilityActionBackend(
+                elementReader: elementReader,
+                inputSynthesizer: inputSynthesizer,
+                windowCapturer: windowCapturer,
+                windowServerBridge: windowServerBridge,
+                accessibilityModes: accessibilityModes,
+                openPanelDriver: openPanelDriver,
+                cursorPresenter: cursorController,
+                automatedActivityRelay: automatedTargetActivityRelay
+            )
+        }
         let directRouteExecutionDependencies = Self.makeDirectRouteExecutionDependencies()
         let taskSessionController = TaskSessionController(dependencies: TaskSessionControllerDependencies(
             claudeTransport: claudeTransport,
             anthropicAPIKeyStore: anthropicAPIKeyStore,
-            actionBackend: actionBackend,
+            makeActionBackend: makeActionBackend,
             keyboardMonitor: GlobalKeyboardMonitor(),
             pointerMovementObserver: PointerMovementObserver(),
             cursorController: cursorController,
@@ -115,10 +121,10 @@ final class DottoAppDelegate: NSObject, NSApplicationDelegate {
         taskSessionController?.stop()
         // A Chromium target keeps its enhanced accessibility mode on (slower) until someone turns it off. Quitting
         // can't wait on an actor from here, so the restore gets up to half a second on a background thread.
-        guard let actionBackend else { return }
+        let accessibilityModes = self.accessibilityModes
         let restoreFinished = DispatchSemaphore(value: 0)
         Task.detached {
-            await actionBackend.restoreTargetAccessibilityModes()
+            await accessibilityModes.restoreAll()
             restoreFinished.signal()
         }
         _ = restoreFinished.wait(timeout: .now() + 0.5)

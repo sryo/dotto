@@ -2,8 +2,9 @@ import AppKit
 import ApplicationServices
 
 /// Chromium and Electron only build a full Accessibility tree, and Chromium only answers AXPress in web content,
-/// once an assistive client switches these modes on. They are set per task, and every prior value is put back
-/// at the end of the task, on cancel, on dismiss and at quit.
+/// once an assistive client switches these modes on. Each task's backend holds its target's modes: they go on with the
+/// first hold on an app and every prior value is put back with the last release (`AccessibilityModeHolds`), so one
+/// task ending never switches off another's. Everything is put back at quit.
 ///
 /// Every change is also written to a small file, so values a crashed Dotto left on are put back at the next launch.
 /// EUI makes some apps animate windows and move them oddly, so a stale one is worth undoing.
@@ -25,11 +26,11 @@ actor TargetApplicationAccessibilityModes {
 
     private let changedModesFileURL: URL?
     private var recordedPriorValues: [RecordedPriorValue] = []
-    private var remoteAwareObserver: AXObserver?
-    private var remoteAwareRegistrations: [(element: AXUIElement, notificationName: String)] = []
-    /// Bumped by every restoreAll. enable() sleeps for a second after setting EUI; a restore that ran meanwhile has
-    /// already put the prior value back, so enable must not report EUI as on.
-    private var restoreGeneration = 0
+    private var holds = AccessibilityModeHolds()
+    private var remoteAwareObserversByProcessIdentifier: [pid_t: (observer: AXObserver, registrations: [(element: AXUIElement, notificationName: String)])] = [:]
+    /// Bumped by every restore of an app. enable() sleeps for a second after setting EUI; a restore that ran meanwhile
+    /// has already put the prior value back, so enable must not report EUI as on.
+    private var restoreGenerationByProcessIdentifier: [pid_t: Int] = [:]
 
     /// Puts back whatever a previous launch left recorded (it can only still be there if Dotto crashed or was killed).
     init(changedModesDirectoryURL: URL? = TargetApplicationAccessibilityModes.defaultChangedModesDirectoryURL()) {
@@ -53,47 +54,66 @@ actor TargetApplicationAccessibilityModes {
                                                         embeddedFrameworkNames: embeddedFrameworkNames)
     }
 
-    /// Sets the modes `AccessibilityModePolicy` names for the app kind, remembering prior values, and registers the
-    /// remote-aware observer. With EUI it waits until 1 s has passed since the set and reads EUI back. Returns whether
-    /// EUI is verified on.
+    /// Holds the app's modes for one task. The first hold sets the modes `AccessibilityModePolicy` names for the app kind,
+    /// remembering prior values, and registers the remote-aware observer; with EUI it waits until 1 s has passed since
+    /// the set. Returns whether EUI is verified on. Every hold must be matched by one `release(processIdentifier:)`.
     func enable(for application: TargetApplicationReference, applicationKind: TargetApplicationKind,
                 windowServerBridge: PrivateWindowServerBridge) async -> Bool {
+        let processIdentifier = application.processIdentifier
         let modePolicy = AccessibilityModePolicy.policy(
             for: applicationKind, canKeepRemoteAccessibilityTreeAlive: windowServerBridge.capabilities.canKeepRemoteAccessibilityTreeAlive)
-        let applicationElement = AccessibilityElementReader.makeApplicationElement(for: application.processIdentifier)
+        let applicationElement = AccessibilityElementReader.makeApplicationElement(for: processIdentifier)
+        guard holds.hold(processIdentifier: processIdentifier) else {
+            // Another task already holds this app's modes on; its settle wait covers this one.
+            return modePolicy.setsEnhancedUserInterface
+                && AccessibilityElementReader.boolAttribute(Self.enhancedUserInterfaceAttribute, of: applicationElement) == true
+        }
         if modePolicy.setsManualAccessibility {
-            setRecordingPriorValue(Self.manualAccessibilityAttribute, on: applicationElement, of: application.processIdentifier)
+            setRecordingPriorValue(Self.manualAccessibilityAttribute, on: applicationElement, of: processIdentifier)
         }
         if !modePolicy.remoteObserverNotificationNames.isEmpty {
-            await registerRemoteAwareObserver(for: application.processIdentifier,
-                                              notificationNames: modePolicy.remoteObserverNotificationNames,
+            await registerRemoteAwareObserver(for: processIdentifier, notificationNames: modePolicy.remoteObserverNotificationNames,
                                               windowServerBridge: windowServerBridge)
         }
         guard modePolicy.setsEnhancedUserInterface else { return false }
-        setRecordingPriorValue(Self.enhancedUserInterfaceAttribute, on: applicationElement, of: application.processIdentifier)
-        let restoreGenerationBeforeSettling = restoreGeneration
+        setRecordingPriorValue(Self.enhancedUserInterfaceAttribute, on: applicationElement, of: processIdentifier)
+        let restoreGenerationBeforeSettling = restoreGenerationByProcessIdentifier[processIdentifier, default: 0]
         try? await Task.sleep(nanoseconds: Self.enhancedUserInterfaceSettleNanoseconds)
-        guard restoreGeneration == restoreGenerationBeforeSettling else { return false }
+        guard restoreGenerationByProcessIdentifier[processIdentifier, default: 0] == restoreGenerationBeforeSettling else { return false }
         return AccessibilityElementReader.boolAttribute(Self.enhancedUserInterfaceAttribute, of: applicationElement) == true
     }
 
+    /// Ends one task's hold; the last one puts this app's prior values back and removes its observer.
+    func release(processIdentifier: pid_t) {
+        guard holds.release(processIdentifier: processIdentifier) else { return }
+        restorePriorValues(ofProcessIdentifier: processIdentifier)
+    }
+
+    /// At quit: every app, whoever holds it.
     func restoreAll() {
-        restoreGeneration += 1
-        for recordedPriorValue in recordedPriorValues.reversed() {
+        let heldProcessIdentifiers = Set(recordedPriorValues.map(\.processIdentifier))
+            .union(remoteAwareObserversByProcessIdentifier.keys)
+        holds.releaseAll()
+        for processIdentifier in heldProcessIdentifiers {
+            restorePriorValues(ofProcessIdentifier: processIdentifier)
+        }
+    }
+
+    private func restorePriorValues(ofProcessIdentifier processIdentifier: pid_t) {
+        restoreGenerationByProcessIdentifier[processIdentifier, default: 0] += 1
+        for recordedPriorValue in recordedPriorValues.reversed() where recordedPriorValue.processIdentifier == processIdentifier {
             Self.putBack(recordedPriorValue)
         }
-        recordedPriorValues = []
+        recordedPriorValues.removeAll { $0.processIdentifier == processIdentifier }
         persistRecordedPriorValues()
-        if let remoteAwareObserver {
+        if let (remoteAwareObserver, registrations) = remoteAwareObserversByProcessIdentifier.removeValue(forKey: processIdentifier) {
             // Removed explicitly: while a registration stands, Blink keeps paying to keep the covered tree live.
-            for (observedElement, notificationName) in remoteAwareRegistrations {
+            for (observedElement, notificationName) in registrations {
                 _ = AXObserverRemoveNotification(remoteAwareObserver, observedElement, notificationName as CFString)
             }
             let observerRunLoopSource = AXObserverGetRunLoopSource(remoteAwareObserver)
             DispatchQueue.main.async { CFRunLoopRemoveSource(CFRunLoopGetMain(), observerRunLoopSource, .defaultMode) }
-            self.remoteAwareObserver = nil
         }
-        remoteAwareRegistrations = []
     }
 
     /// An unreadable prior value counts as false, so restore switches the mode off again.
@@ -154,7 +174,7 @@ actor TargetApplicationAccessibilityModes {
     /// The observer only exists so Blink keeps the tree live while the window is covered; its callback does nothing.
     private func registerRemoteAwareObserver(for processIdentifier: pid_t, notificationNames: [String],
                                              windowServerBridge: PrivateWindowServerBridge) async {
-        guard remoteAwareObserver == nil else { return }
+        guard remoteAwareObserversByProcessIdentifier[processIdentifier] == nil else { return }
         var createdObserver: AXObserver?
         guard AXObserverCreate(processIdentifier, { _, _, _, _ in }, &createdObserver) == .success, let createdObserver else { return }
         let applicationElement = AccessibilityElementReader.makeApplicationElement(for: processIdentifier)
@@ -166,7 +186,14 @@ actor TargetApplicationAccessibilityModes {
         guard !registrations.isEmpty else { return }
         let observerRunLoopSource = AXObserverGetRunLoopSource(createdObserver)
         await MainActor.run { CFRunLoopAddSource(CFRunLoopGetMain(), observerRunLoopSource, .defaultMode) }
-        remoteAwareObserver = createdObserver
-        remoteAwareRegistrations = registrations
+        // The last hold may have been released while this waited for the main actor; nothing would remove it then.
+        guard holds.isHeld(processIdentifier: processIdentifier) else {
+            for (observedElement, notificationName) in registrations {
+                _ = AXObserverRemoveNotification(createdObserver, observedElement, notificationName as CFString)
+            }
+            DispatchQueue.main.async { CFRunLoopRemoveSource(CFRunLoopGetMain(), observerRunLoopSource, .defaultMode) }
+            return
+        }
+        remoteAwareObserversByProcessIdentifier[processIdentifier] = (createdObserver, registrations)
     }
 }

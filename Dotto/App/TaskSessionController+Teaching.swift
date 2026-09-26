@@ -10,7 +10,8 @@ extension TaskSessionController {
         recordedDemonstrationEventCount = 0
         demonstrationRecordingNotes = []
         demonstrationRecorder.startRecording(application: checklist.targetApplication)
-        userInputObserver.startObserving(includingPointerMoves: true)
+        userInputObserver.startObserving(holderIdentifier: currentSession.demonstrationInputObservationHolderIdentifier,
+                                          includingPointerMoves: true)
         cursorController.putCursorAway()
         checklistPanelController?.resignKeyWithoutHiding()
         // The user chose to demonstrate, so the target app must be in front for them; this is not Dotto taking focus.
@@ -25,7 +26,7 @@ extension TaskSessionController {
         guard case .demonstrating(let checklist, let itemIdentifier, false) = sessionState,
               let demonstratedItem = checklist.items.first(where: { $0.itemIdentifier == itemIdentifier }) else { return }
         let demonstrationRecording = demonstrationRecorder.stopRecording()
-        userInputObserver.stopObserving()
+        userInputObserver.stopObserving(holderIdentifier: currentSession.demonstrationInputObservationHolderIdentifier)
         apply(.demonstrationRecordingStopped)
         guard let auditLogWriter = currentAuditLogWriter, let taskResourceBudget = currentTaskResourceBudget else {
             completeTeaching(statusLineAfterTeaching: "Couldn't learn a routine (Dotto isn't configured). It will use Claude for each item.")
@@ -73,7 +74,7 @@ extension TaskSessionController {
         if demonstrationRecorder.isRecording {
             _ = demonstrationRecorder.stopRecording()
         }
-        userInputObserver.stopObserving()
+        userInputObserver.stopObserving(holderIdentifier: currentSession.demonstrationInputObservationHolderIdentifier)
         currentTeachingAbortSignal?.abort()
         currentTeachingAbortSignal = nil
         taughtRoutineAwaitingReview = nil

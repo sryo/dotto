@@ -42,6 +42,8 @@ actor AccessibilityActionBackend: ActionBackend {
     private var targetApplication: TargetApplicationReference?
     private(set) var applicationKind: TargetApplicationKind = .cocoa
     private(set) var enhancedUserInterfaceIsActive = false
+    /// The app whose Accessibility modes this backend holds on (at most one), released exactly once.
+    private var processIdentifierWithHeldAccessibilityModes: pid_t?
     private(set) var uploadFileAllowlist: UploadFileAllowlist = .empty
     private var currentTaskWindow: TaskWindow?
     var cachedMenuItems: [MenuItemWithCommandCharacter]?
@@ -106,10 +108,14 @@ actor AccessibilityActionBackend: ActionBackend {
                 "Open \(taskTargetApplication.applicationName) first. Dotto never opens apps itself, because opening one would take focus.")
         }
         applicationKind = TargetApplicationAccessibilityModes.applicationKind(of: taskTargetApplication)
-        let enhancedUserInterfaceWasVerified = await accessibilityModes.enable(
-            for: taskTargetApplication, applicationKind: applicationKind, windowServerBridge: windowServerBridge)
+        // Planning and the run both prepare the same task's backend; its modes are held once for the pair.
+        if processIdentifierWithHeldAccessibilityModes != taskTargetApplication.processIdentifier {
+            await releaseHeldAccessibilityModes()
+            processIdentifierWithHeldAccessibilityModes = taskTargetApplication.processIdentifier
+            enhancedUserInterfaceIsActive = await accessibilityModes.enable(
+                for: taskTargetApplication, applicationKind: applicationKind, windowServerBridge: windowServerBridge)
+        }
         guard runGeneration == runGenerationBeingPrepared else { throw ActionBackendError.aborted }
-        enhancedUserInterfaceIsActive = enhancedUserInterfaceWasVerified
         uploadFileAllowlist = taskConfiguration.uploadFileAllowlist
         targetApplication = taskTargetApplication
         _ = await resolveTaskWindow(of: taskTargetApplication)
@@ -120,9 +126,16 @@ actor AccessibilityActionBackend: ActionBackend {
         attachedRunControl = (runAbortSignal, runControl)
     }
 
-    /// Also needed outside a run: on cancel, dismiss and quit.
+    /// Also needed outside a run: on cancel and dismiss. Releases only this task's hold; other tasks' apps keep theirs.
     func restoreTargetAccessibilityModes() async {
-        await accessibilityModes.restoreAll()
+        await releaseHeldAccessibilityModes()
+    }
+
+    private func releaseHeldAccessibilityModes() async {
+        guard let processIdentifierWithHeldAccessibilityModes else { return }
+        self.processIdentifierWithHeldAccessibilityModes = nil
+        enhancedUserInterfaceIsActive = false
+        await accessibilityModes.release(processIdentifier: processIdentifierWithHeldAccessibilityModes)
     }
 
     func readUserInterface(_ request: ReadUserInterfaceRequest, abortSignal: TaskAbortSignal) async throws -> AccessibilityTreeSnapshot {
@@ -253,7 +266,7 @@ actor AccessibilityActionBackend: ActionBackend {
         let runGenerationBeingFinished = runGeneration
         let finishingRunAbortSignal = attachedRunControl?.runAbortSignal ?? abortSignalOfCurrentRun
         await cursorPresenter.hideCursor(ownedByRunWith: finishingRunAbortSignal)
-        await accessibilityModes.restoreAll()
+        await releaseHeldAccessibilityModes()
         // A new run may have prepared while the cursor was hiding; its state is not ours to clear.
         guard runGeneration == runGenerationBeingFinished else { return }
         clearCachedState()
