@@ -26,6 +26,7 @@ actor TargetApplicationAccessibilityModes {
     private let changedModesFileURL: URL?
     private var recordedPriorValues: [RecordedPriorValue] = []
     private var remoteAwareObserver: AXObserver?
+    private var remoteAwareRegistrations: [(element: AXUIElement, notificationName: String)] = []
     /// Bumped by every restoreAll. enable() sleeps for a second after setting EUI; a restore that ran meanwhile has
     /// already put the prior value back, so enable must not report EUI as on.
     private var restoreGeneration = 0
@@ -52,28 +53,28 @@ actor TargetApplicationAccessibilityModes {
                                                         embeddedFrameworkNames: embeddedFrameworkNames)
     }
 
-    /// Sets AXManualAccessibility (chromium/electron) and AXEnhancedUserInterface (chromium), remembering prior values,
-    /// then waits until 1 s has passed since the set and reads EUI back. Returns whether EUI is verified on.
+    /// Sets the modes `AccessibilityModePolicy` names for the app kind, remembering prior values, and registers the
+    /// remote-aware observer. With EUI it waits until 1 s has passed since the set and reads EUI back. Returns whether
+    /// EUI is verified on.
     func enable(for application: TargetApplicationReference, applicationKind: TargetApplicationKind,
                 windowServerBridge: PrivateWindowServerBridge) async -> Bool {
+        let modePolicy = AccessibilityModePolicy.policy(
+            for: applicationKind, canKeepRemoteAccessibilityTreeAlive: windowServerBridge.capabilities.canKeepRemoteAccessibilityTreeAlive)
         let applicationElement = AccessibilityElementReader.makeApplicationElement(for: application.processIdentifier)
-        switch applicationKind {
-        case .cocoa, .webKitBrowser:
-            return false
-        case .electron:
+        if modePolicy.setsManualAccessibility {
             setRecordingPriorValue(Self.manualAccessibilityAttribute, on: applicationElement, of: application.processIdentifier)
-            if windowServerBridge.capabilities.canKeepRemoteAccessibilityTreeAlive {
-                await registerRemoteAwareObserver(for: application.processIdentifier, windowServerBridge: windowServerBridge)
-            }
-            return false
-        case .chromiumBrowser:
-            setRecordingPriorValue(Self.manualAccessibilityAttribute, on: applicationElement, of: application.processIdentifier)
-            setRecordingPriorValue(Self.enhancedUserInterfaceAttribute, on: applicationElement, of: application.processIdentifier)
-            let restoreGenerationBeforeSettling = restoreGeneration
-            try? await Task.sleep(nanoseconds: Self.enhancedUserInterfaceSettleNanoseconds)
-            guard restoreGeneration == restoreGenerationBeforeSettling else { return false }
-            return AccessibilityElementReader.boolAttribute(Self.enhancedUserInterfaceAttribute, of: applicationElement) == true
         }
+        if !modePolicy.remoteObserverNotificationNames.isEmpty {
+            await registerRemoteAwareObserver(for: application.processIdentifier,
+                                              notificationNames: modePolicy.remoteObserverNotificationNames,
+                                              windowServerBridge: windowServerBridge)
+        }
+        guard modePolicy.setsEnhancedUserInterface else { return false }
+        setRecordingPriorValue(Self.enhancedUserInterfaceAttribute, on: applicationElement, of: application.processIdentifier)
+        let restoreGenerationBeforeSettling = restoreGeneration
+        try? await Task.sleep(nanoseconds: Self.enhancedUserInterfaceSettleNanoseconds)
+        guard restoreGeneration == restoreGenerationBeforeSettling else { return false }
+        return AccessibilityElementReader.boolAttribute(Self.enhancedUserInterfaceAttribute, of: applicationElement) == true
     }
 
     func restoreAll() {
@@ -84,10 +85,15 @@ actor TargetApplicationAccessibilityModes {
         recordedPriorValues = []
         persistRecordedPriorValues()
         if let remoteAwareObserver {
+            // Removed explicitly: while a registration stands, Blink keeps paying to keep the covered tree live.
+            for (observedElement, notificationName) in remoteAwareRegistrations {
+                _ = AXObserverRemoveNotification(remoteAwareObserver, observedElement, notificationName as CFString)
+            }
             let observerRunLoopSource = AXObserverGetRunLoopSource(remoteAwareObserver)
             DispatchQueue.main.async { CFRunLoopRemoveSource(CFRunLoopGetMain(), observerRunLoopSource, .defaultMode) }
             self.remoteAwareObserver = nil
         }
+        remoteAwareRegistrations = []
     }
 
     /// An unreadable prior value counts as false, so restore switches the mode off again.
@@ -146,14 +152,21 @@ actor TargetApplicationAccessibilityModes {
     }
 
     /// The observer only exists so Blink keeps the tree live while the window is covered; its callback does nothing.
-    private func registerRemoteAwareObserver(for processIdentifier: pid_t, windowServerBridge: PrivateWindowServerBridge) async {
+    private func registerRemoteAwareObserver(for processIdentifier: pid_t, notificationNames: [String],
+                                             windowServerBridge: PrivateWindowServerBridge) async {
+        guard remoteAwareObserver == nil else { return }
         var createdObserver: AXObserver?
         guard AXObserverCreate(processIdentifier, { _, _, _, _ in }, &createdObserver) == .success, let createdObserver else { return }
         let applicationElement = AccessibilityElementReader.makeApplicationElement(for: processIdentifier)
-        guard windowServerBridge.addRemoteAwareNotification(kAXFocusedUIElementChangedNotification, to: createdObserver,
-                                                            element: applicationElement, context: nil) == .success else { return }
+        var registrations: [(element: AXUIElement, notificationName: String)] = []
+        for notificationName in notificationNames where windowServerBridge.addRemoteAwareNotification(
+            notificationName, to: createdObserver, element: applicationElement, context: nil) == .success {
+            registrations.append((applicationElement, notificationName))
+        }
+        guard !registrations.isEmpty else { return }
         let observerRunLoopSource = AXObserverGetRunLoopSource(createdObserver)
         await MainActor.run { CFRunLoopAddSource(CFRunLoopGetMain(), observerRunLoopSource, .defaultMode) }
         remoteAwareObserver = createdObserver
+        remoteAwareRegistrations = registrations
     }
 }

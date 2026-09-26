@@ -4,9 +4,6 @@ import CoreGraphics
 enum AccessibilityOutlineFormatter {
     private static let hoistableContainerRoles: Set<String> = ["AXGroup", "AXSplitGroup", "AXScrollArea", "AXLayoutArea",
                                                                "AXLayoutItem", "AXUnknown", "AXSection"]
-    private static let interactiveRoles: Set<String> = ["AXButton", "AXCheckBox", "AXRadioButton", "AXTextField", "AXTextArea",
-        "AXComboBox", "AXPopUpButton", "AXMenuButton", "AXLink", "AXSlider", "AXIncrementor", "AXMenuItem", "AXMenuBarItem",
-        "AXRow", "AXCell", "AXDisclosureTriangle", "AXTab", "AXColorWell", "AXDateField"]
     private static let shortRoleNameOverrides: [String: String] = ["AXStaticText": "text", "AXPopUpButton": "popup",
         "AXRadioButton": "radio", "AXCheckBox": "checkbox", "AXMenuItem": "menuitem", "AXMenuBarItem": "menubaritem",
         "AXComboBox": "combobox", "AXTextArea": "textarea", "AXDisclosureTriangle": "disclosure", "AXWebArea": "webarea"]
@@ -91,16 +88,12 @@ enum AccessibilityOutlineFormatter {
         if hoistableContainerRoles.contains(node.role) && !hasOwnText && !node.supportsPressAction {
             return prunedChildren
         }
-        if prunedChildren.isEmpty && !isInteractive(node) && !hasOwnText && nonEmpty(node.placeholder) == nil {
+        if prunedChildren.isEmpty && !AccessibilityRoleTraits.isInteractive(node) && !hasOwnText && nonEmpty(node.placeholder) == nil {
             return []
         }
         var prunedNode = node
         prunedNode.children = prunedChildren
         return [prunedNode]
-    }
-
-    private static func isInteractive(_ node: AccessibilityElementNode) -> Bool {
-        node.supportsPressAction || interactiveRoles.contains(node.role)
     }
 
     // MARK: - Query filtering
@@ -134,6 +127,7 @@ enum AccessibilityOutlineFormatter {
         if let windowTitle = nonEmpty(snapshot.windowTitle) {
             header += " window=\"\(sanitize(windowTitle, limits: limits))\""
         }
+        if snapshot.windowIsMinimized { header += " (window is minimized)" }
         header += " scope=\(snapshot.scope.rawValue) snapshot=\(snapshot.snapshotGeneration)"
         header += " elements=\(snapshot.rawNodeCount) shown=\(shownElementCount)" + querySuffix
         if snapshot.wasTruncatedDuringRead {
@@ -183,7 +177,7 @@ enum AccessibilityOutlineFormatter {
         if !node.isEnabled { lineParts.append("disabled") }
         if node.isFocused { lineParts.append("focused") }
         if node.isSelected { lineParts.append("selected") }
-        if node.supportsPressAction && !interactiveRoles.contains(node.role) { lineParts.append("clickable") }
+        if node.supportsPressAction && !AccessibilityRoleTraits.interactiveRoles.contains(node.role) { lineParts.append("clickable") }
         return lineParts.joined(separator: " ")
     }
 

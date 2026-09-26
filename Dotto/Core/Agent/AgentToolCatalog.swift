@@ -61,7 +61,7 @@ enum AgentToolCatalog {
         """#)
 
     private static let screenshotTool = makeStrictTool(.screenshot,
-        description: "Capture the target app's window only (also when other windows cover it). Use only when the outline lacks the element you need. click_point uses this image's pixel coordinates, relative to that window.",
+        description: "Capture the target app's window only (also when other windows cover it). Its interactive elements are boxed and labeled with their element ids, and the result lists them; these ids replace the latest outline's, so click a marked element with click. Use when the outline is ambiguous (repeated or empty labels) or lacks the element you need. click_point uses this image's pixel coordinates, relative to that window.",
         inputSchemaJSONText: #"{"type":"object","additionalProperties":false,"properties":{},"required":[]}"#)
 
     private static let clickTool = makeStrictTool(.click,
@@ -127,7 +127,7 @@ enum AgentToolCatalog {
         """#)
 
     private static let clickPointTool = makeStrictTool(.clickPoint,
-        description: "Fallback: click at pixel coordinates of the most recent window screenshot. Prefer click with an element id whenever the element is in the outline.",
+        description: "Fallback: click at pixel coordinates of the most recent window screenshot. Prefer click with an element id whenever the element is in the outline, and never use click_point on an element that has a mark in the screenshot: click its id.",
         inputSchemaJSONText: #"""
         {"type":"object","additionalProperties":false,
          "properties":{

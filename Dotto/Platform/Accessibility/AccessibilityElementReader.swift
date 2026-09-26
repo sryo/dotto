@@ -94,6 +94,9 @@ final class AccessibilityElementReader {
             snapshotGeneration: snapshotGeneration, application: application, windowTitle: windowTitle, scope: scope,
             rootNodes: rootNodes, rawNodeCount: treeWalkProgress.rawNodeCount,
             wasTruncatedDuringRead: treeWalkProgress.wasTruncated)
+        if scope == .focusedWindow, let focusedWindow = rootElements.first {
+            snapshot.windowIsMinimized = Self.boolAttribute(kAXMinimizedAttribute, of: focusedWindow) == true
+        }
         if scope != .menuBar {
             // Browsers leave AXDocument empty; their page URL lives on the web area instead.
             snapshot.focusedWindowDocument = rootElements.first.flatMap { Self.stringAttribute(kAXDocumentAttribute, of: $0) }
@@ -192,7 +195,8 @@ final class AccessibilityElementReader {
 
         let role = Self.stringified(batchedValue(kAXRoleAttribute)) ?? "AXUnknown"
         let subrole = Self.stringified(batchedValue(kAXSubroleAttribute))
-        let isSecureTextField = subrole == Self.secureTextFieldSubrole
+        // Some toolkits report the secure field as the role rather than the subrole (as isSecureTextField(_:) checks).
+        let isSecureTextField = subrole == Self.secureTextFieldSubrole || role == Self.secureTextFieldSubrole
         let elementIdentifier = "e\(nextElementNumber)"
         nextElementNumber += 1
         treeWalkProgress.elementReferencesByIdentifier[elementIdentifier] = accessibilityElement

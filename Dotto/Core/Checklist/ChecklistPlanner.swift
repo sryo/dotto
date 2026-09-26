@@ -321,8 +321,10 @@ final class ChecklistPlanner {
                 return ([.text(PromptLibrary.untrustedUserInterfaceBlock(outline))], false)
             case .screenshot:
                 await onProgress(.takingScreenshot)
-                let screenshotCapture = try await actionBackend.captureScreenshot()
-                return (ClaudeToolResultBuilding.screenshotResultContent(screenshotCapture, applicationName: applicationName), false)
+                let markedScreenshotCapture = try await actionBackend.captureMarkedScreenshot(markLimits: .planner,
+                                                                                              abortSignal: abortSignal)
+                return (ClaudeToolResultBuilding.screenshotResultContent(markedScreenshotCapture, applicationName: applicationName,
+                                                                         markLimits: .planner), false)
             case .submitPlan(let submittedChecklist):
                 recordSubmittedChecklist(submittedChecklist)
                 return ([.text("Plan received.")], false)

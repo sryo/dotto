@@ -14,6 +14,14 @@ enum TargetWindowCaptureError: Error, LocalizedError {
     }
 }
 
+/// The task window's image as captured, with the frames of the app's own windows drawn over it.
+struct CapturedWindowImage {
+    var image: CGImage
+    var taskWindowFrame: CGRect
+    /// Sheets, popovers and menus of the target composited over the task window; they cover what is under them.
+    var childWindowFrames: [CGRect]
+}
+
 /// Captures only the task window, also when other windows cover it, and streams it for the live view.
 @MainActor final class TargetWindowCapturer: NSObject, TargetWindowFrameStreaming {
     nonisolated private static let maximumLongEdgePixels = 1280
@@ -36,23 +44,25 @@ enum TargetWindowCaptureError: Error, LocalizedError {
 
     // MARK: - One-shot capture
 
-    /// JPEG of the task window with its own sheets, popovers and menus composited in. The returned pixel size is the
-    /// encoded image's exact size, and `capturedWindow` carries the frame at capture time, which click_point maps from.
-    nonisolated func captureWindow(_ targetWindow: TargetWindowReference) async throws -> ScreenshotCapture {
+    /// The task window with its own sheets, popovers and menus composited in, before encoding, so marks can be drawn on
+    /// it. `taskWindowFrame` is the frame at capture time, which click_point maps from.
+    nonisolated func captureComposedWindowImage(_ targetWindow: TargetWindowReference) async throws -> CapturedWindowImage {
         let (taskWindow, childWindows) = try await Self.shareableWindows(for: targetWindow)
         let pixelSize = ScreenCoordinateConversion.screenshotPixelSize(
             fittingWindowSizeInPoints: taskWindow.frame.size, maximumLongEdgePixels: Self.maximumLongEdgePixels,
             maximumTotalPixelCount: Self.maximumTotalPixelCount)
         let taskWindowImage = try await Self.captureImage(of: taskWindow, pixelSize: pixelSize)
         let composedImage = try await Self.compositing(childWindows, over: taskWindowImage, taskWindowFrame: taskWindow.frame)
-        guard let jpegData = NSBitmapImageRep(cgImage: composedImage)
-                .representation(using: .jpeg, properties: [.compressionFactor: Self.jpegCompressionFactor]) else {
+        return CapturedWindowImage(image: composedImage, taskWindowFrame: taskWindow.frame,
+                                   childWindowFrames: childWindows.map(\.frame))
+    }
+
+    nonisolated static func encodeJPEG(_ image: CGImage) throws -> Data {
+        guard let jpegData = NSBitmapImageRep(cgImage: image)
+                .representation(using: .jpeg, properties: [.compressionFactor: jpegCompressionFactor]) else {
             throw TargetWindowCaptureError.imageEncodingFailed
         }
-        var capturedWindow = targetWindow
-        capturedWindow.frameInTopLeftGlobalPoints = taskWindow.frame
-        return ScreenshotCapture(jpegData: jpegData, pixelWidth: composedImage.width, pixelHeight: composedImage.height,
-                                 capturedWindow: capturedWindow, capturedAt: Date())
+        return jpegData
     }
 
     /// A tiny grayscale capture for the change fingerprint, used only when every AX signal shows no change.
@@ -61,6 +71,10 @@ enum TargetWindowCaptureError: Error, LocalizedError {
               let windowImage = try? await Self.captureImage(
                 of: taskWindow, pixelSize: CGSize(width: Self.thumbnailCapturePixelSide, height: Self.thumbnailCapturePixelSide))
         else { return nil }
+        return Self.grayscaleThumbnail(of: windowImage)
+    }
+
+    nonisolated static func grayscaleThumbnail(of windowImage: CGImage) -> WindowImageThumbnail? {
         let sideLengthInCells = WindowImageThumbnail.sideLengthInCells
         var grayscaleCells = [UInt8](repeating: 0, count: sideLengthInCells * sideLengthInCells)
         let didDraw = grayscaleCells.withUnsafeMutableBytes { pixelBuffer -> Bool in

@@ -199,10 +199,14 @@ final class ChecklistItemAgentLoop {
                 return readResult
 
             case .screenshot:
-                let screenshotCapture = try await actionBackend.captureScreenshot()
+                let markedScreenshotCapture = try await actionBackend.captureMarkedScreenshot(markLimits: .executor,
+                                                                                              abortSignal: abortSignal)
+                // The marked ids are now the backend's latest, so SafetyGate and routine locators must see this snapshot.
+                if let markedSnapshot = markedScreenshotCapture.snapshot { runState.latestSnapshot = markedSnapshot }
                 var screenshotResult = PendingToolResult.success(toolUseIdentifier, "")
                 for contentPart in ClaudeToolResultBuilding.screenshotResultContent(
-                    screenshotCapture, applicationName: context.checklist.targetApplication.applicationName) {
+                    markedScreenshotCapture, applicationName: context.checklist.targetApplication.applicationName,
+                    markLimits: .executor) {
                     switch contentPart {
                     case .text(let descriptionText): screenshotResult.text = descriptionText
                     case .image(let imageBlock): screenshotResult.imageBlocks.append(imageBlock)

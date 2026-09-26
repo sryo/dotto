@@ -80,7 +80,11 @@ The app is menu bar only (`LSUIElement`): a status item, a command bar, a floati
      tools (`read_ui`, `click`, `type_text`, `replace_text`, `press_key`, `scroll`, `click_point`, `screenshot`,
      `wait_for`, `finish_item`). The built-in computer-use tool is not used. `replace_text` edits part of a field's
      text (or inserts at its start or end) through Accessibility alone, with no caret, clicks or keys, so text edits
-     stay in the background. When replay fails partway, the agent takes over
+     stay in the background. `screenshot` returns a set-of-mark image: it reads the window first, boxes its
+     interactive elements and labels each with its element id (`Core/UserInterfaceReading/ScreenshotMarkLayoutCalculator`,
+     drawn by `Platform/Capture/ScreenshotMarkRenderer`), so those ids become the latest outline's and a marked
+     element is clicked with `click`, not `click_point`. A minimized, hidden or blank window is refused with guidance
+     (`WindowCaptureAssessment`) instead of a misleading image. When replay fails partway, the agent takes over
      from the failed step, and the routine is patched.
    - The first verified agent item is compiled into a parameterized routine (`RoutineCompiler`), and the items
      after it replay that routine.
@@ -269,7 +273,9 @@ Every one of these has tests in `DottoCoreTests/`. If a change weakens one of th
    scripts and Shortcuts are unavailable too because their contents can activate apps outside the action backend.
    After Dotto's own file pickers or a click on its notification, activation goes back to the app the user was in
    (`App/PreviousApplicationTracker`), never to the target unless that is where they were. Per-task
-   accessibility modes (`AXManualAccessibility`, `AXEnhancedUserInterface`) are restored at the task's end, on
+   accessibility modes (`AXManualAccessibility`, `AXEnhancedUserInterface`, chosen per app kind by
+   `Core/InputDelivery/AccessibilityModePolicy`, plus the remote-aware observer registration that keeps a covered
+   Chromium or Electron tree live, which is removed notification by notification) are restored at the task's end, on
    cancel, on dismiss and on quit. While they are changed, `TargetApplicationAccessibilityModes` keeps a record in
    `~/Library/Application Support/Dotto/ChangedAccessibilityModes.json`, so after a crash the next launch puts them
    back (same process, bundle id and launch date only) and deletes the file. Menus never open in the background: a
@@ -295,15 +301,18 @@ Every one of these has tests in `DottoCoreTests/`. If a change weakens one of th
    refusal, error or Stop cancels the panel, and the assist restores the user's app, window and cursor. Nothing
    else in Dotto may post focused input, and this path must never be used outside the assist.
 4. **Secure fields are refused.** Dotto never types into `AXSecureTextField`. SafetyGate denies it, with no
-   confirmation possible, and the AX backend re-checks the live element. Secure values are stripped from outlines,
-   locators and recordings (`AccessibilityOutlineFormatter`, `ElementLocatorResolver`, `RoutineCompiler`,
-   `DemonstrationRecorder`).
+   confirmation possible, and the AX backend re-checks the live element. A field counts as secure when its role or
+   its subrole is `AXSecureTextField`, and its `AXValue` is never read. Secure values are stripped from outlines,
+   screenshot mark lists, locators and recordings (`AccessibilityOutlineFormatter`, `ScreenshotMarkListFormatter`,
+   `ElementLocatorResolver`, `RoutineCompiler`, `DemonstrationRecorder`).
 5. **Screen text is data** (`Core/Agent/PromptLibrary`). Screen content and parameter values go inside
    `<untrusted_ui>`, and planner text goes inside `<planner_notes>`. The user's answers to the planner are their own
    text and go inside `<user_reply>` (`plannerUserReplyText`), never inside `<untrusted_ui>`. Tag look-alikes of all
    three are neutralized (`neutralizingTrustTags`). The system prompts say neither can add items or widen the task. Tool results fence
-   anything the app reported (action reports, error details) the same way: Dotto's own wording stays outside the
-   block (`ActionBackendError.fencedMessageForModel`, `ClaudeToolResultBuilding.fencedMessageForModel`).
+   anything the app reported (action reports, error details, a screenshot's list of marked elements) the same way:
+   Dotto's own wording stays outside the block (`ActionBackendError.fencedMessageForModel`,
+   `ClaudeToolResultBuilding.fencedMessageForModel`, `ClaudeToolResultBuilding.screenshotResultContent`). The ids
+   drawn on a screenshot are Dotto's; everything else in the image is screen content.
 6. **The audit log is redacted** (`Core/Audit/AuditLogWriter`). Text Dotto typed (and `replace_text`'s `find` and
    `replace_with`) is replaced by its SHA-256 fingerprint wherever it resurfaces, and messages and details are truncated. The log directory is `0700` and
    its files are `0600`.
@@ -503,7 +512,7 @@ Every one of these has tests in `DottoCoreTests/`. If a change weakens one of th
 | `Dotto/Core/Safety/` | `SafetyGate`, `SafetyConfirmationFlow` (the one place a confirmation is asked and applied), `SafetyModels` (limits, categories), `SafetyRiskVocabulary`, `TargetApplicationPolicy` |
 | `Dotto/Core/SummonGesture/` | `CircleSummonGestureRecognizer`, `SummonGestureConfiguration`, `SummonGestureModels` (sample, analysis, update), `SummonGestureEligibility` (with the default exclusion list and the fire-time check), `SummonGesturePreferenceModels` (stored choices, exclusion additions/removals), `SummonGestureDisplayGeometry` |
 | `Dotto/Core/Support/` | `CanonicalJSONEncoding` (stable bytes for prompt caching and routine signatures; never change its options), `JSONValue`, SHA-256, the `SummonHotkey` model |
-| `Dotto/Core/Verification/`, `UserInterfaceReading/`, `Audit/`, `Permissions/` | Expectations and waiting, the AX snapshot and outline formatter, the audit log, permission policy |
+| `Dotto/Core/Verification/`, `UserInterfaceReading/`, `Audit/`, `Permissions/` | Expectations and waiting, the AX snapshot and outline formatter (with `AccessibilityRoleTraits`, the role tables both it and the marks use), screenshot marks (`ScreenshotMarkModels`, `ScreenshotMarkLayoutCalculator`, `ScreenshotMarkListFormatter`) and `WindowCaptureAssessment`, the audit log, permission policy |
 | `Dotto/Platform/Accessibility/AccessibilityActionBackend.swift` | The backend's entry point: target pinning, element resolution, tier dispatch |
 | `Dotto/Platform/Accessibility/AccessibilityActionBackend+Click.swift`, `+Typing`, `+ReplaceText`, `+Keys`, `+Scroll`, `+ChangeConfirmation`, `+Uploads` | One file per action family (`+ReplaceText`: `replace_text` through AXSelectedTextRange/AXSelectedText, else the whole AXValue, read back), the visible-change confirmation, and `upload_files` inside the assist |
 | `Dotto/Platform/Accessibility/AccessibilityElementReader.swift` with `+AttributeReading`, `+DeliverySupport`, `+Recording` | Outlines and snapshots; shared attribute reads; what delivery planning reads; what teach mode reads |
@@ -513,9 +522,9 @@ Every one of these has tests in `DottoCoreTests/`. If a change weakens one of th
 | `Dotto/Platform/Input/GlobalKeyboardMonitor.swift`, `SummonHotkeyConflictCheck.swift` | The summon shortcut (and nothing else) and the check for macOS or launchers already owning it |
 | `Dotto/Platform/Input/UserInputObserver.swift`, `RealUserInputCounter.swift`, `ForegroundAssistReadinessProbe.swift`, `ForegroundAssistSession.swift`, `DottoWindowPointerHitTest.swift`, `DemonstrationRecorder.swift` | The user-input observer and its real-input counter, the bring-forward readiness probe and session, the hit test that keeps clicks on Dotto's own windows from counting as takeover, the teach-mode recorder |
 | `Dotto/Platform/SummonGesture/PointerMovementObserver.swift`, `PointerTargetApplicationResolver.swift`, `SessionScreenLockReader.swift` | The one idle-time pointer observation (moves and button state only); the app under the pointer and the full-screen check on the pointer's display; lock and fast-user-switching state |
-| `Dotto/Platform/WindowServer/` | `PrivateWindowServerBridge` (window ids, the optional authenticated key path) and `WindowListEntryClassification`, the overlay and shield rule shared by the hit test, the visibility monitor and the backend |
+| `Dotto/Platform/WindowServer/` | `PrivateWindowServerBridge` (window ids, the optional authenticated key path, a read-only "is this window on another Space" query) and `WindowListEntryClassification`, the overlay and shield rule shared by the hit test, the visibility monitor and the backend |
 | `Dotto/Platform/FileOperations/`, `Dotto/Platform/Scripting/` | `FileManagerFileSystem` (mutations and reads), `FinderWindowFolderResolver`; `BoundedProcessRunner` (fixed executables, argument arrays, capped pipes, timeout and Stop; the child leads its own process group, which Stop kills), `OsascriptScriptRunner`, `ShortcutsCommandRunner`, `AutomationPermissionProbe`, `ScriptabilityProbe` |
-| `Dotto/Platform/{Capture,Claude,Permissions,Routines,Uploads}/` | Window capture and visibility (ScreenCaptureKit), `AnthropicMessagesTransport` (direct to api.anthropic.com: SSE, retries, error mapping, cancellation) and `AnthropicAPIKeyStore` (the Keychain item), TCC checks, the Keychain signing key, upload path canonicalization |
+| `Dotto/Platform/{Capture,Claude,Permissions,Routines,Uploads}/` | Window capture and visibility (ScreenCaptureKit) and `ScreenshotMarkRenderer` (boxes and id labels, drawn with CoreGraphics and Core Text), `AnthropicMessagesTransport` (direct to api.anthropic.com: SSE, retries, error mapping, cancellation) and `AnthropicAPIKeyStore` (the Keychain item), TCC checks, the Keychain signing key, upload path canonicalization |
 | `Dotto/UI/Shared/` | `DottoPanel` (the non-activating base of every Dotto window, with `KeyablePanel` and `NonActivatingClickablePanel`), `NSHostingView+Panels`, `PanelContentSizing` (hosting views sized only by their panel, reported content sizes, deferred frame changes), `AttachedPanelTailView`, `ScreenCorner`, screen geometry, the drag area |
 | `Dotto/UI/Cursor/` | `CursorController` (the one presenter, with `CursorViewModel`), `CursorSurfaces` (the cursor parked at the summon origin, the overlay window, the pill panel and the live view panel), `CursorView`, `CursorShapes`, `CursorAppearance` (with `CursorPalette`), `CursorPillView` (with `DecisionPill`), `LiveViewPanelView` |
 | `Dotto/UI/SummonGesture/` | `SummonGestureRingPanelController` (the click-through ring panel) and `SummonGestureRingView` |

@@ -33,6 +33,8 @@ struct AccessibilityTreeSnapshot: Equatable, Sendable {
     var wasTruncatedDuringRead: Bool
     /// The window's AXDocument, else the first web area's AXURL.
     var focusedWindowDocument: String? = nil
+    /// The outlined window is minimized in the Dock: its elements still read, but nothing of it is on screen.
+    var windowIsMinimized: Bool = false
 
     func node(withIdentifier elementIdentifier: String) -> AccessibilityElementNode? {
         func findNode(in candidateNodes: [AccessibilityElementNode]) -> AccessibilityElementNode? {

@@ -153,17 +153,60 @@ actor AccessibilityActionBackend: ActionBackend {
         return snapshot
     }
 
-    /// The task window only, also when other windows cover it.
-    func captureScreenshot() async throws -> ScreenshotCapture {
+    /// The task window only, also when other windows cover it, with its interactive elements marked by id. The window
+    /// is read first, so the marked ids are the latest outline's. A minimized, hidden or blank window is refused with
+    /// guidance rather than sent as a misleading image; Dotto never unminimizes, unhides or switches Spaces to fix it.
+    func captureMarkedScreenshot(markLimits: ScreenshotMarkLimits, abortSignal: TaskAbortSignal) async throws -> MarkedScreenshotCapture {
         let taskTargetApplication = try requireTargetApplication()
         let runGenerationAtStart = runGeneration
         guard let taskWindow = await resolveTaskWindow(of: taskTargetApplication) else {
             throw ActionBackendError.accessibilityCallFailed("\(taskTargetApplication.applicationName) has no open window to capture.")
         }
-        let screenshotCapture = try await windowCapturer.captureWindow(taskWindow.reference)
+        let windowIsMinimized = AccessibilityElementReader.boolAttribute(kAXMinimizedAttribute, of: taskWindow.element) ?? false
+        let applicationIsHidden = NSRunningApplication(processIdentifier: taskTargetApplication.processIdentifier)?.isHidden ?? false
+        if let earlyUnavailableReason = WindowCaptureAssessment.unavailableReason(
+            windowIsMinimized: windowIsMinimized, applicationIsHidden: applicationIsHidden, windowIsOnAnotherSpace: false,
+            captureIsBlank: false) {
+            throw ActionBackendError.screenshotUnavailable(earlyUnavailableReason)
+        }
+
+        var markedSnapshot: AccessibilityTreeSnapshot?
+        do {
+            markedSnapshot = try await readUserInterface(ReadUserInterfaceRequest(scope: .focusedWindow, applicationName: nil, query: nil),
+                                                         abortSignal: abortSignal)
+        } catch ActionBackendError.aborted {
+            throw ActionBackendError.aborted
+        } catch {
+            // The picture is still useful without marks; the model is told none could be drawn.
+            markedSnapshot = nil
+        }
         guard runGeneration == runGenerationAtStart else { throw ActionBackendError.aborted }
+
+        let capturedWindowImage = try await windowCapturer.captureComposedWindowImage(taskWindow.reference)
+        guard runGeneration == runGenerationAtStart else { throw ActionBackendError.aborted }
+        let captureIsBlank = TargetWindowCapturer.grayscaleThumbnail(of: capturedWindowImage.image).map(WindowCaptureAssessment.isBlank) ?? false
+        if captureIsBlank, let blankUnavailableReason = WindowCaptureAssessment.unavailableReason(
+            windowIsMinimized: false, applicationIsHidden: false,
+            windowIsOnAnotherSpace: windowServerBridge.windowIsOnAnotherSpace(taskWindow.reference.windowIdentifier) ?? false,
+            captureIsBlank: true) {
+            throw ActionBackendError.screenshotUnavailable(blankUnavailableReason)
+        }
+
+        let imagePixelSize = CGSize(width: capturedWindowImage.image.width, height: capturedWindowImage.image.height)
+        let markLayout = markedSnapshot.map { snapshot in
+            ScreenshotMarkLayoutCalculator.layOutMarks(
+                for: snapshot, capturedWindowFrameInTopLeftGlobalPoints: capturedWindowImage.taskWindowFrame,
+                imagePixelSize: imagePixelSize, occludingFramesInTopLeftGlobalPoints: capturedWindowImage.childWindowFrames,
+                labelMetrics: ScreenshotMarkRenderer.labelMetrics, limits: markLimits)
+        } ?? .unavailable(.outlineUnreadable)
+        let markedImage = ScreenshotMarkRenderer.drawing(markLayout, onto: capturedWindowImage.image)
+        var capturedWindow = taskWindow.reference
+        capturedWindow.frameInTopLeftGlobalPoints = capturedWindowImage.taskWindowFrame
+        let screenshotCapture = ScreenshotCapture(jpegData: try TargetWindowCapturer.encodeJPEG(markedImage),
+                                                  pixelWidth: markedImage.width, pixelHeight: markedImage.height,
+                                                  capturedWindow: capturedWindow, capturedAt: Date())
         latestScreenshot = screenshotCapture
-        return screenshotCapture
+        return MarkedScreenshotCapture(screenshotCapture: screenshotCapture, snapshot: markedSnapshot, markLayout: markLayout)
     }
 
     func perform(_ action: AgentAction, abortSignal: TaskAbortSignal) async throws -> ActionOutcome {

@@ -255,6 +255,35 @@ let checklistItemAgentLoopTestSuite = CoreTestSuite(name: "ChecklistItemAgentLoo
         }
         try expectEqual(oldestScreenshotResult.content.last, .text(ClaudeToolConversationRunner.removedScreenshotPlaceholderText))
     },
+    CoreTestCase(name: "a screenshot's marked ids become the latest, so clicking a marked Send button still asks") {
+        let windowFrame = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let harness = try ItemLoopTestHarness(replies: [
+            try ConversationFixtures.toolTurn(ConversationFixtures.toolUse("toolu_shot", "screenshot", "{}")),
+            try ConversationFixtures.toolTurn(ConversationFixtures.toolUse("toolu_send", "click", ConversationFixtures.clickInput("e9"))),
+        ], confirmationAnswers: [.skipItem], snapshotRootNodes: [
+            makeFixtureNode("e1", "AXWindow", title: "Documents", frame: windowFrame, children: [
+                makeFixtureNode("e2", "AXButton", title: "Rename", frame: CGRect(x: 100, y: 100, width: 80, height: 24)),
+            ]),
+        ])
+        let actionBackend = harness.actionBackend
+        // The screenshot's own read finds a Send button the item's first outline didn't have.
+        actionBackend.errorForRead = { readNumber in
+            if readNumber >= 2 {
+                actionBackend.snapshotRootNodes = [makeFixtureNode("e1", "AXWindow", title: "Documents", frame: windowFrame, children: [
+                    makeFixtureNode("e2", "AXButton", title: "Rename", frame: CGRect(x: 100, y: 100, width: 80, height: 24)),
+                    makeFixtureNode("e9", "AXButton", title: "Send", frame: CGRect(x: 300, y: 100, width: 80, height: 24)),
+                ])]
+            }
+            return nil
+        }
+        let itemResult = try await harness.runItem(itemLabel: "Reply to Ana")
+        try expectEqual(actionBackend.markedScreenshotCount, 1)
+        let screenshotResultText = ConversationFixtures.firstText(of: try firstToolResult(ofRequest: 1, in: harness.transport))
+        try expectTrue(screenshotResultText.contains("[e9] button \"Send\""), screenshotResultText)
+        try expectEqual(await harness.confirmationRequester.receivedRequests.map(\.riskCategory), [.sendingOrPublishing])
+        try expectTrue(actionBackend.performedActions.isEmpty)
+        try expectEqual(itemResult.runStatus, .skipped)
+    },
     CoreTestCase(name: "input that didn't land in the background asks to bring the app forward, then succeeds in front") {
         let harness = try ItemLoopTestHarness(replies: [
             try ConversationFixtures.toolTurn(ConversationFixtures.toolUse("toolu_1", "click", ConversationFixtures.clickInput("e2"))),

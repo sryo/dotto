@@ -44,11 +44,27 @@ final class FakeActionBackend: ActionBackend {
         return makeFixtureSnapshot(snapshotRootNodes, scope: request.scope, windowTitle: "Documents", generation: readRequests.count)
     }
 
-    func captureScreenshot() async throws -> ScreenshotCapture {
-        ScreenshotCapture(jpegData: Data([0xFF, 0xD8, 0xFF]), pixelWidth: 1280, pixelHeight: 800,
-                          capturedWindow: TargetWindowReference(processIdentifier: fixtureTargetApplication.processIdentifier,
-                                                                windowIdentifier: 42, frameInTopLeftGlobalPoints: CGRect(x: 0, y: 0, width: 1440, height: 900)),
-                          capturedAt: Date())
+    /// The window a fake screenshot captures when the fixture window has no frame.
+    static let screenshotWindowFrame = CGRect(x: 0, y: 0, width: 1440, height: 900)
+    var markedScreenshotCount = 0
+
+    /// Reads the fixture snapshot like read_ui does, then lays out marks with the real calculator.
+    func captureMarkedScreenshot(markLimits: ScreenshotMarkLimits, abortSignal: TaskAbortSignal) async throws -> MarkedScreenshotCapture {
+        markedScreenshotCount += 1
+        let snapshot = try await readUserInterface(ReadUserInterfaceRequest(scope: .focusedWindow, applicationName: nil, query: nil),
+                                                   abortSignal: abortSignal)
+        let capturedWindowFrame = snapshot.rootNodes.first?.frameInTopLeftGlobalPoints ?? Self.screenshotWindowFrame
+        let screenshotCapture = ScreenshotCapture(
+            jpegData: Data([0xFF, 0xD8, 0xFF]), pixelWidth: 1280, pixelHeight: 800,
+            capturedWindow: TargetWindowReference(processIdentifier: fixtureTargetApplication.processIdentifier, windowIdentifier: 42,
+                                                  frameInTopLeftGlobalPoints: capturedWindowFrame),
+            capturedAt: Date())
+        let markLayout = ScreenshotMarkLayoutCalculator.layOutMarks(
+            for: snapshot, capturedWindowFrameInTopLeftGlobalPoints: capturedWindowFrame,
+            imagePixelSize: CGSize(width: 1280, height: 800), occludingFramesInTopLeftGlobalPoints: [],
+            labelMetrics: ScreenshotLabelMetrics(characterWidthInPixels: 7, labelHeightInPixels: 14, horizontalPaddingInPixels: 3),
+            limits: markLimits)
+        return MarkedScreenshotCapture(screenshotCapture: screenshotCapture, snapshot: snapshot, markLayout: markLayout)
     }
 
     func perform(_ action: AgentAction, abortSignal: TaskAbortSignal) async throws -> ActionOutcome {

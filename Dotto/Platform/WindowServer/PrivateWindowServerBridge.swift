@@ -5,8 +5,9 @@ import ApplicationServices
 /// once at launch, and a missing one only switches off the tiers that need it.
 ///
 /// It is deliberately small: window ids for AX windows, the remote-aware AX observer, the
-/// authenticated keyboard path for Chromium and Electron (which the planner uses only once it is approved), and the
-/// window location of pointer events, which the foreground assist needs for a per-process click to land. There are
+/// authenticated keyboard path for Chromium and Electron (which the planner uses only once it is approved), the
+/// window location of pointer events, which the foreground assist needs for a per-process click to land, and a
+/// read-only question about which Spaces a window is on. There are
 /// no focus-without-raise records and no background clicks: both could disturb the user's front window.
 final class PrivateWindowServerBridge: @unchecked Sendable {
     private typealias PostEventToProcessFunction = @convention(c) (pid_t, CGEvent) -> Void
@@ -19,6 +20,9 @@ final class PrivateWindowServerBridge: @unchecked Sendable {
         @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
     private typealias AddRemoteAwareNotificationFunction =
         @convention(c) (AXObserver, AXUIElement, CFString, UnsafeMutableRawPointer?) -> AXError
+    private typealias MainConnectionIdentifierFunction = @convention(c) () -> Int32
+    private typealias CopySpacesForWindowsFunction = @convention(c) (Int32, Int32, CFArray) -> Unmanaged<CFArray>?
+    private typealias CopyManagedDisplaySpacesFunction = @convention(c) (Int32) -> Unmanaged<CFArray>?
 
     private static let skyLightFrameworkPath = "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight"
     private static let applicationServicesFrameworkPath = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
@@ -34,6 +38,8 @@ final class PrivateWindowServerBridge: @unchecked Sendable {
     private static let eventRecordLocationByteOffset = 16
     private static let minimumPlausibleEventRecordLength = 32
     private static let maximumPlausibleEventRecordLength = 4096
+    /// CGSSpaceMask: the current Spaces, the other ones and the user's own (kCGSAllSpacesMask without system Spaces).
+    private static let allUserSpacesMask: Int32 = 0b111
 
     let capabilities: PrivateWindowServerCapabilities
 
@@ -44,6 +50,9 @@ final class PrivateWindowServerBridge: @unchecked Sendable {
     private let authenticationMessageClass: AnyClass?
     private let windowOfAccessibilityElement: WindowOfAccessibilityElementFunction?
     private let addRemoteAwareNotificationFunction: AddRemoteAwareNotificationFunction?
+    private let mainConnectionIdentifier: MainConnectionIdentifierFunction?
+    private let copySpacesForWindows: CopySpacesForWindowsFunction?
+    private let copyManagedDisplaySpaces: CopyManagedDisplaySpacesFunction?
 
     init() {
         let skyLightHandle = dlopen(Self.skyLightFrameworkPath, RTLD_NOW)
@@ -71,6 +80,11 @@ final class PrivateWindowServerBridge: @unchecked Sendable {
         addRemoteAwareNotificationFunction = resolvedSymbol("_AXObserverAddNotificationAndCheckRemote",
                                                             in: [applicationServicesHandle, defaultHandle],
                                                             as: AddRemoteAwareNotificationFunction.self)
+        mainConnectionIdentifier = resolvedSymbol("SLSMainConnectionID", in: [skyLightHandle],
+                                                  as: MainConnectionIdentifierFunction.self)
+        copySpacesForWindows = resolvedSymbol("SLSCopySpacesForWindows", in: [skyLightHandle], as: CopySpacesForWindowsFunction.self)
+        copyManagedDisplaySpaces = resolvedSymbol("SLSCopyManagedDisplaySpaces", in: [skyLightHandle],
+                                                  as: CopyManagedDisplaySpacesFunction.self)
 
         // The class exists on macOS 14 without the factory selector, so both are checked.
         var resolvedAuthenticationMessageClass: AnyClass?
@@ -127,6 +141,24 @@ final class PrivateWindowServerBridge: @unchecked Sendable {
                                     context: UnsafeMutableRawPointer?) -> AXError? {
         guard let addRemoteAwareNotificationFunction else { return nil }
         return addRemoteAwareNotificationFunction(observer, element, notificationName as CFString, context)
+    }
+
+    /// True when the window is on no Space any display currently shows; nil when that can't be told (the symbols are
+    /// missing, or the window server knows no Space for it, as for a minimized window). Only reads: never switches Spaces.
+    func windowIsOnAnotherSpace(_ windowIdentifier: CGWindowID) -> Bool? {
+        guard let mainConnectionIdentifier, let copySpacesForWindows, let copyManagedDisplaySpaces else { return nil }
+        let connectionIdentifier = mainConnectionIdentifier()
+        guard let windowSpacesArray = copySpacesForWindows(connectionIdentifier, Self.allUserSpacesMask,
+                                                           [NSNumber(value: windowIdentifier)] as CFArray)?.takeRetainedValue(),
+              let displaySpacesArray = copyManagedDisplaySpaces(connectionIdentifier)?.takeRetainedValue() else { return nil }
+        let windowSpaceIdentifiers = Set((windowSpacesArray as? [NSNumber] ?? []).map(\.uint64Value))
+        guard !windowSpaceIdentifiers.isEmpty else { return nil }
+        let currentSpaceIdentifiers = Set((displaySpacesArray as? [[String: Any]] ?? []).compactMap { displayDescription -> UInt64? in
+            guard let currentSpace = displayDescription["Current Space"] as? [String: Any] else { return nil }
+            return (currentSpace["id64"] as? NSNumber ?? currentSpace["ManagedSpaceID"] as? NSNumber)?.uint64Value
+        })
+        guard !currentSpaceIdentifiers.isEmpty else { return nil }
+        return windowSpaceIdentifiers.isDisjoint(with: currentSpaceIdentifiers)
     }
 
     private func makeAuthenticationMessage(for event: CGEvent, processIdentifier: pid_t) -> AnyObject? {

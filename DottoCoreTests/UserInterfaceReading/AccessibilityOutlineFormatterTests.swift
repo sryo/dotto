@@ -41,6 +41,13 @@ private func elementLines(of outline: String) -> [Substring] {
 }
 
 let accessibilityOutlineFormatterTestSuite = CoreTestSuite(name: "AccessibilityOutlineFormatter", testCases: [
+    CoreTestCase(name: "a minimized window says so in the header") {
+        var snapshot = makeSnapshot([finderWindowNode], rawNodeCount: 5)
+        snapshot.windowIsMinimized = true
+        let header = AccessibilityOutlineFormatter.formatOutline(snapshot, query: nil, limits: .executor)
+            .components(separatedBy: "\n")[0]
+        try expectTrue(header.contains("window=\"Screenshots\" (window is minimized) scope="), header)
+    },
     CoreTestCase(name: "formats the pruned outline exactly") {
         let expectedOutline = """
         app="Finder" window="Screenshots" scope=focused_window snapshot=3 elements=16 shown=11

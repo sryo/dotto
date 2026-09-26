@@ -35,6 +35,7 @@ enum ActionBackendError: Error, Equatable, Sendable {
     case uploadNotAllowed(String)
     /// replace_text's `find` isn't in the field. The detail names the field and shows its text, both from the app.
     case textToReplaceNotFound(String)
+    case screenshotUnavailable(ScreenshotUnavailableReason)
 
     static let inputNotDeliveredText = "Dotto's input didn't take effect in the app while it stayed in the background."
     static let pausedBeforeThisActionText = "The task was paused before this action ran and the user may have changed the UI. Read the UI again and repeat the action if it is still needed."
@@ -76,6 +77,8 @@ enum ActionBackendError: Error, Equatable, Sendable {
         case .textToReplaceNotFound(let fieldDescriptionAndText):
             return ("Nothing changed: the text in `find` isn't in that field. Matching is exact and case-sensitive, so copy "
                         + "the text from the field's current value. The field and its text:", fieldDescriptionAndText)
+        case .screenshotUnavailable(let reason):
+            return (reason.guidanceForModel, nil)
         }
     }
 
@@ -99,7 +102,9 @@ protocol ActionBackend: AnyObject {
     func prepareForTask(_ taskConfiguration: ActionBackendTaskConfiguration) async throws
     /// Walks must check abortSignal between elements so Stop interrupts a slow or hung target app.
     func readUserInterface(_ request: ReadUserInterfaceRequest, abortSignal: TaskAbortSignal) async throws -> AccessibilityTreeSnapshot
-    func captureScreenshot() async throws -> ScreenshotCapture
+    /// The task window only, also when other windows cover it, with its interactive elements boxed and labeled by id.
+    /// Reads the window's elements first, so the marked ids become the latest outline's ids.
+    func captureMarkedScreenshot(markLimits: ScreenshotMarkLimits, abortSignal: TaskAbortSignal) async throws -> MarkedScreenshotCapture
     /// Background only; never takes focus. Must check abortSignal before every posted input event and throw
     /// ActionBackendError.aborted.
     func perform(_ action: AgentAction, abortSignal: TaskAbortSignal) async throws -> ActionOutcome
