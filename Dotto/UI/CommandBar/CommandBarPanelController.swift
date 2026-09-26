@@ -23,10 +23,9 @@ struct SubmittedCommandPill {
     let morphsIntoStatusPill: Bool
 }
 
-/// The Spotlight-style field for typing a task, in two forms sharing one panel: the command bar near the top of the
-/// screen (the summon shortcut) and the command pill at the pointer (the circle gesture). The panel is
-/// non-activating so the user's app stays frontmost, yet it can become key so the text field receives typing, which
-/// is allowed only because the user summoned it.
+/// The field for typing a task: the command pill at the pointer, however Dotto was summoned (the shortcut, the circle
+/// gesture, the menu bar's New task or Edit command). The panel is non-activating so the user's app stays frontmost,
+/// yet it can become key so the text field receives typing, which is allowed only because the user summoned it.
 @MainActor
 final class CommandBarPanelController {
     private let taskSessionController: TaskSessionController
@@ -36,10 +35,9 @@ final class CommandBarPanelController {
     private let commandFieldFocusRequest = CommandFieldFocusRequest()
     private var commandBarPanelBecameKeyObserver: NSObjectProtocol?
     private var clickOutsideMonitor: Any?
-    private let commandBarWidth: CGFloat = 560
     private let commandPillPlacementCalculator = PillPlacementCalculator()
     /// The pointer the shown pill hangs from, and where it went, so a pill that changes size stays beside the pointer
-    /// and on screen; nil while the command bar (or nothing) is shown.
+    /// and on screen; nil while nothing is shown.
     private var commandPillPointerInTopLeftGlobalPoints: CGPoint?
     private var latestCommandPillPlacement: PillPlacement?
     /// Only if the pill's content hasn't reported its size: the capsule and the hint under it.
@@ -67,45 +65,11 @@ final class CommandBarPanelController {
         commandBarPanel?.isVisible ?? false
     }
 
-    func showCommandBar(prefilledCommandText: String) {
-        finishCommandPillMorph()
-        let commandBarPanel = self.commandBarPanel ?? makeCommandBarPanel()
-        self.commandBarPanel = commandBarPanel
-
-        // A fresh hosting view per presentation resets the text field and re-runs
-        // onAppear, which is what moves keyboard focus into the field.
-        let hostingView = NSHostingView(rootView: AnyView(CommandBarView(
-            taskSessionController: taskSessionController,
-            commandFieldFocusRequest: commandFieldFocusRequest,
-            initialCommandText: prefilledCommandText,
-            onDismiss: { [weak self] in self?.hideCommandBar() }
-        ).drawsControlsAsActive().fixedSize().reportingPanelContentSize(to: commandContentSizeBox)))
-            .withClearBackground().sizedOnlyByItsPanel()
-        commandBarPanel.contentView = hostingView
-        // The bar's rounded card casts the window server's shadow; the pill draws its own, in room around it.
-        commandBarPanel.hasShadow = true
-        commandPillEntrance = nil
-
-        let commandBarHeight = hostingView.laidOutContentSize(reportedTo: commandContentSizeBox).height
-        if let screenFrame = ScreenGeometry.screenUnderMouse?.frame, commandBarHeight > 0 {
-            // AppKit y grows upward, so 70% of the height is the upper part of the screen.
-            let commandBarCenterY = screenFrame.minY + screenFrame.height * 0.7
-            commandBarPanelFrameApplier?.applyFrameNow(NSRect(
-                x: screenFrame.midX - commandBarWidth / 2,
-                y: commandBarCenterY - commandBarHeight / 2,
-                width: commandBarWidth,
-                height: commandBarHeight))
-        }
-
-        onCommandPillDismissed = nil
-        commandPillPointerInTopLeftGlobalPoints = nil
-        latestCommandPillPlacement = nil
-        presentKey(commandBarPanel)
-    }
-
     /// Opens the pill below and right of the pointer, flipped left of or above it near an edge of the pointer's
     /// screen so it stays inside that screen's visible frame. `onDismiss` runs when it closes without a command.
-    func showCommandPill(atTopLeftGlobalPoint topLeftGlobalPoint: CGPoint, reducesMotion: Bool, onDismiss: @escaping () -> Void) {
+    /// `prefilledCommandText` is the previous command when the user chose Edit command.
+    func showCommandPill(atTopLeftGlobalPoint topLeftGlobalPoint: CGPoint, reducesMotion: Bool, prefilledCommandText: String = "",
+                         onDismiss: @escaping () -> Void) {
         finishCommandPillMorph()
         commandPillReducesMotion = reducesMotion
         let commandBarPanel = self.commandBarPanel ?? makeCommandBarPanel()
@@ -118,6 +82,7 @@ final class CommandBarPanelController {
             commandFieldFocusRequest: commandFieldFocusRequest,
             entrance: commandPillEntrance,
             reducesMotion: reducesMotion,
+            initialCommandText: prefilledCommandText,
             onDismiss: { [weak self] in self?.hideCommandBar() }
         ).drawsControlsAsActive().fixedSize().reportingPanelContentSize(to: commandContentSizeBox)))
             .withClearBackground().sizedOnlyByItsPanel()
@@ -320,24 +285,21 @@ final class CommandBarPanelController {
     }
 
     private func makeCommandBarPanel() -> KeyablePanel {
-        let commandBarPanel = KeyablePanel(contentRect: NSRect(x: 0, y: 0, width: commandBarWidth, height: 80))
-        // The window server derives this shadow from the rounded card's alpha; a SwiftUI
-        // shadow would be clipped at the panel's edges.
-        commandBarPanel.hasShadow = true
+        let commandBarPanel = KeyablePanel(contentRect: NSRect(x: 0, y: 0, width: CommandPillView.pillWidth, height: 80))
+        // The capsule draws the status pill's own shadow, which the morph carries on.
+        commandBarPanel.hasShadow = false
         // Submitting hands it over to the morph or the status pill in one frame; a system fade would show both.
         commandBarPanel.animationBehavior = .none
         let commandBarPanelFrameApplier = DeferredPanelFrameApplier(panel: commandBarPanel)
         self.commandBarPanelFrameApplier = commandBarPanelFrameApplier
-        // Content that changes size while shown (an attachment chip) keeps the bar's top-left corner in place, and
-        // the pill beside its pointer and on screen, applied outside SwiftUI's update.
+        // Content that changes size while shown (an attachment chip) keeps the pill beside its pointer and on screen,
+        // applied outside SwiftUI's update.
         commandContentSizeBox.onContentSizeChange = { [weak self] _ in
             self?.commandBarPanelFrameApplier?.scheduleFrameUpdate { [weak self] in
-                guard let self, let commandBarPanel = self.commandBarPanel, commandBarPanel.isVisible else { return nil }
-                let contentSize = self.commandContentSizeBox.latestContentSize
-                if let commandPillPointerInTopLeftGlobalPoints = self.commandPillPointerInTopLeftGlobalPoints {
-                    return self.commandPillPanelFrame(forPanelSize: contentSize, pointerPoint: commandPillPointerInTopLeftGlobalPoints)
-                }
-                return ScreenCorner.topLeft.frame(ofSize: contentSize, keepingCornerAt: ScreenCorner.topLeft.point(of: commandBarPanel.frame))
+                guard let self, let commandBarPanel = self.commandBarPanel, commandBarPanel.isVisible,
+                      let commandPillPointerInTopLeftGlobalPoints = self.commandPillPointerInTopLeftGlobalPoints else { return nil }
+                return self.commandPillPanelFrame(forPanelSize: self.commandContentSizeBox.latestContentSize,
+                                                  pointerPoint: commandPillPointerInTopLeftGlobalPoints)
             }
         }
         commandBarPanelBecameKeyObserver = NotificationCenter.default.addObserver(

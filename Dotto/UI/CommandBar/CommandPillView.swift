@@ -22,9 +22,9 @@ final class CommandPillEntrance: ObservableObject {
     }
 }
 
-/// The command bar in its summoned-at-the-pointer form, opened by the circle gesture: a task-color capsule with
-/// Dotto's arrow and a white text field, and a small hint under it. Submitting goes through the command bar's own
-/// path (`TaskSessionController.submitCommand`). The capsule draws the cursor pill's own shadow, in room the view
+/// The command field at the pointer, however Dotto was summoned: a task-color capsule with Dotto's arrow and a white
+/// text field with a paperclip, and a small hint under it (with the attached files, once there are any). Files can also
+/// be dropped on it. Submitting goes through `TaskSessionController.submitCommand`. The capsule draws the cursor pill's own shadow, in room the view
 /// keeps around itself, so the morph into the status pill carries one continuous shadow.
 struct CommandPillView: View {
     @ObservedObject var taskSessionController: TaskSessionController
@@ -33,8 +33,19 @@ struct CommandPillView: View {
     let reducesMotion: Bool
     let onDismiss: () -> Void
 
-    @State private var commandText = ""
+    @State private var commandText: String
     @FocusState private var isCommandFieldFocused: Bool
+    @State private var isFileDropTargeted = false
+
+    init(taskSessionController: TaskSessionController, commandFieldFocusRequest: CommandFieldFocusRequest,
+         entrance: CommandPillEntrance, reducesMotion: Bool, initialCommandText: String = "", onDismiss: @escaping () -> Void) {
+        self.taskSessionController = taskSessionController
+        self.commandFieldFocusRequest = commandFieldFocusRequest
+        self.entrance = entrance
+        self.reducesMotion = reducesMotion
+        self.onDismiss = onDismiss
+        _commandText = State(initialValue: initialCommandText)
+    }
 
     static let pillWidth: CGFloat = 320
     /// Fixed, so the pill can be placed (and the status pill lined up with it) before it is laid out.
@@ -57,9 +68,21 @@ struct CommandPillView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Self.hintSpacing) {
             commandCapsule
-            CommandPillHintChip()
-                .padding(.leading, Self.hintLeadingInset)
-                .opacity(entrance.hintHasEntered ? 1 : 0)
+            HStack(spacing: 6) {
+                CommandPillHintChip()
+                if !taskSessionController.attachedUploadGrants.isEmpty {
+                    CommandPillAttachedFilesChip(attachedUploadGrants: taskSessionController.attachedUploadGrants,
+                                                 onClear: { taskSessionController.clearAttachedFiles() })
+                }
+            }
+            .padding(.leading, Self.hintLeadingInset)
+            .opacity(entrance.hintHasEntered ? 1 : 0)
+        }
+        .dropDestination(for: URL.self) { droppedURLs, _ in
+            taskSessionController.attachFilesForNextTask(urls: droppedURLs)
+            return !droppedURLs.isEmpty
+        } isTargeted: { isTargeted in
+            isFileDropTargeted = isTargeted
         }
         .scaleEffect(entrance.capsuleHasEntered || reducesMotion ? 1 : DesignSystem.Motion.appearScale,
                      anchor: entrance.growthAnchor)
@@ -75,20 +98,68 @@ struct CommandPillView: View {
 
     private var commandCapsule: some View {
         CommandPillCapsuleContent {
-            TextField("", text: $commandText,
-                      prompt: Text("What should Dotto do in \(targetApplicationName)?").foregroundColor(Self.placeholderColor))
-                .textFieldStyle(.plain)
-                .focused($isCommandFieldFocused)
-                .onSubmit(submitCommand)
-                .onExitCommand(perform: onDismiss)
-                .accessibilityLabel("Task for Dotto")
+            HStack(spacing: 6) {
+                TextField("", text: $commandText,
+                          prompt: Text("What should Dotto do in \(targetApplicationName)?").foregroundColor(Self.placeholderColor))
+                    .textFieldStyle(.plain)
+                    .focused($isCommandFieldFocused)
+                    .onSubmit(submitCommand)
+                    .onExitCommand(perform: onDismiss)
+                    .accessibilityLabel("Task for Dotto")
+                attachFilesButton
+            }
         }
         .background(CommandPillCapsuleShape().fill(taskColor).commandPillCapsuleShadow())
+        .overlay(CommandPillCapsuleShape().stroke(Color.white, lineWidth: isFileDropTargeted ? 2 : 0))
+    }
+
+    private var attachFilesButton: some View {
+        HoverAwarePlainButton(action: {
+            taskSessionController.chooseFilesToAttach()
+            isCommandFieldFocused = true
+        }) { isHovered in
+            Image(systemName: "paperclip")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(isHovered ? CommandPillCapsuleContent<EmptyView>.fieldTextColor : Self.placeholderColor)
+        }
+        .accessibilityLabel("Attach files…")
+        .nativeTooltip("Pick or drop the files Dotto may attach in this task. Nothing else can be uploaded.")
     }
 
     private func submitCommand() {
         guard !commandText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         taskSessionController.submitCommand(commandText)
+    }
+}
+
+/// The files attached to the next task, beside the pill's hint, with Clear.
+struct CommandPillAttachedFilesChip: View {
+    let attachedUploadGrants: [UploadFileGrant]
+    let onClear: () -> Void
+
+    var body: some View {
+        let attachedNames = attachedUploadGrants.map { ($0.canonicalPath as NSString).lastPathComponent }
+        let attachmentSummary = attachedUploadGrants.count == 1
+            ? "\(attachedNames[0]) attached"
+            : "\(attachedUploadGrants.count) \(attachedUploadGrants.contains(where: \.isDirectory) ? "items" : "files") attached"
+        HStack(spacing: 4) {
+            Image(systemName: "paperclip")
+            Text(attachmentSummary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .nativeTooltip(attachedNames.joined(separator: "\n"))
+            Button("Clear", action: onClear)
+                .dsTextButtonStyle()
+        }
+        .font(.system(size: 11, weight: .medium))
+        .foregroundColor(DesignSystem.Colors.textSecondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(DesignSystem.Colors.surface2)
+                .shadow(color: CursorPalette.pillShadowColor.opacity(0.18), radius: 6, x: 0, y: 3)
+        )
     }
 }
 

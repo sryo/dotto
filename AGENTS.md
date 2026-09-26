@@ -10,14 +10,16 @@ is kept in the macOS Keychain, and the app calls `api.anthropic.com` directly. T
 
 ## What Dotto does
 
-The app is menu bar only (`LSUIElement`): a status item, a command bar, a floating checklist panel and a cursor overlay.
+The app is menu bar only (`LSUIElement`): a status item, a command pill, a floating checklist panel and a cursor overlay.
 
-1. **Command bar** (⌃⌥Space by default, rebindable in the menu bar panel; `UI/CommandBar`). Dotto captures the frontmost app as the task's **target app**.
-   Or **circle to summon**: circling the pointer opens the same command bar as a pill at the pointer, and the
-   target app is the owner of the window under the pointer (see "Circle to summon" below). Either way Dotto records
+1. **Command pill** (⌃⌥Space by default, rebindable in the menu bar panel; `UI/CommandBar`): a task-color capsule
+   at the pointer, with a paperclip for attaching files (they can also be dropped on it). Dotto captures the
+   frontmost app as the task's **target app**. Or **circle to summon**: circling the pointer opens the same pill, and
+   the target app is the owner of the window under the pointer (see "Circle to summon" below). The menu bar's New
+   task and a failed task's Edit command open it too. Either way Dotto records
    the **summon origin** (top-left global points): the point the gesture fired at, or the pointer when the shortcut
-   opened the bar (`TaskSessionController.summonOriginOfNextCommandInTopLeftGlobalPoints`). Submitting carries it into
-   the task (`currentTaskSummonOriginInTopLeftGlobalPoints`). Both forms take the keyboard as soon as they show (the
+   opened the pill (`TaskSessionController.summonOriginOfNextCommandInTopLeftGlobalPoints`). Submitting carries it into
+   the task (`currentTaskSummonOriginInTopLeftGlobalPoints`). The pill takes the keyboard as soon as it shows (the
    field is focused again once the panel is key, `CommandFieldFocusRequest`).
 2. **Planner** (`claude-opus-5-5`, `Core/Checklist/ChecklistPlanner`). It reads the target app's Accessibility
    outline (plus a screenshot when needed) and returns a `Checklist` through the `submit_plan` tool. When it truly
@@ -138,7 +140,7 @@ What else the app does:
   bringing the app forward, "Allow for this task" leads and "Just this once" follows, since one task brings its one
   target app forward many times; the readiness wait and countdown still run every time.
 - **Uploads** (`upload_files`, `Core/Uploads/UploadFileAllowlist`). Only files the user attached or dropped in the
-  command bar, or files inside a folder picked for a folder routine, can be uploaded. A typed path never grants
+  command pill, or files inside a folder picked for a folder routine, can be uploaded. A typed path never grants
   anything. Grants of `/`, `/Users`, `/Volumes` or a whole volume are never honored, `Users/<name>/Library` is
   protected at any depth, and `/System/Volumes/Data/…` paths count as their `/…` spelling. The open panel is driven
   inside the approved assist (`Platform/Accessibility/NativeOpenPanelDriver`), with the one focused keyboard path
@@ -153,7 +155,7 @@ What else the app does:
   - `Core/SummonGesture`: `CircleSummonGestureRecognizer` (a rolling buffer of pointer samples, winding around
     their centroid, radius and roundness limits, a reversal limit read on a tremor-thinned path, a 0.7 s
     cooldown), `SummonGestureConfiguration`, `SummonGestureEligibility` (observation: enabled, no task in
-    progress, command bar or pill closed, frontmost app not excluded, not full screen on the pointer's display,
+    progress, command pill closed, frontmost app not excluded, not full screen on the pointer's display,
     screen not locked, asleep or in the screen saver; and at fire time, `allowsSummoning`: the app under the
     pointer is not excluded, blocked by `TargetApplicationPolicy` or Dotto itself), `SummonGesturePreferenceModels`
     (what is stored: the user's choices and exclusion additions/removals) and `SummonGestureDisplayGeometry`
@@ -356,7 +358,7 @@ Every one of these has tests in `DottoCoreTests/`. If a change weakens one of th
     user's windows come back. The ways to stop are: clicking or typing in the target app (a takeover pause), a Stop
     button (checklist panel, cursor pill while planning or a run is live, the live view expanded or collapsed, the
     menu bar panel), and Esc only while an Dotto panel is key (the checklist panel stops the run or planning, and on
-    the planner's question ends the task; the command bar and pill just close). There is no global stop shortcut and no Esc event tap: Esc in the user's other apps is theirs.
+    the planner's question ends the task; the command pill just closes). There is no global stop shortcut and no Esc event tap: Esc in the user's other apps is theirs.
 10b. **While no task runs, Dotto observes pointer position only, for circle to summon.** `PointerMovementObserver`
     sees mouse moves and whether a button went down or up, never keys, click positions or drags, and only while
     `SummonGestureEligibility` allows it (never while the screen is locked, asleep or in the screen saver). Moves go
@@ -546,7 +548,7 @@ Every one of these has tests in `DottoCoreTests/`. If a change weakens one of th
 | `Dotto/UI/Shared/` | `DottoPanel` (the non-activating base of every Dotto window, with `KeyablePanel` and `NonActivatingClickablePanel`), `NSHostingView+Panels`, `PanelContentSizing` (hosting views sized only by their panel, reported content sizes, deferred frame changes), `AttachedPanelTailView`, `ScreenCorner`, screen geometry, the drag area |
 | `Dotto/UI/Cursor/` | `CursorController` (the one presenter, with `CursorViewModel`), `CursorSurfaces` (the cursor parked at the summon origin, the overlay window, the pill panel and the live view panel), `CursorView`, `CursorShapes`, `CursorAppearance` (with `CursorPalette`), `CursorPillView` (with `DecisionPill`), `LiveViewPanelView` |
 | `Dotto/UI/SummonGesture/` | `SummonGestureRingPanelController` (the click-through ring panel) and `SummonGestureRingView` |
-| `Dotto/UI/` (other) | `MenuBar` (incl. `MenuBarTaskRow`, `AnthropicAPIKeySection`, `UndoLastTaskRow`, the summon shortcut recorder, circle-to-summon and attention settings), `CommandBar` (the bar with file attachments, `CommandPillView`, the pill at the pointer, and `CommandPillMorphView`, the pill turning into the cursor's status pill on Return), `Checklist` (the popover panel attached to the cursor, rows, the planning thread and reply field, intervention cards, routine review, direct-route previews, progress and results), `Routines` (step list), `Attention` (`AttentionChime`), `DesignSystem` |
+| `Dotto/UI/` (other) | `MenuBar` (incl. `MenuBarTaskRow`, `AnthropicAPIKeySection`, `UndoLastTaskRow`, the summon shortcut recorder, circle-to-summon and attention settings), `CommandBar` (`CommandPillView`, the pill at the pointer with its file attachments, and `CommandPillMorphView`, the pill turning into the cursor's status pill on Return), `Checklist` (the popover panel attached to the cursor, rows, the planning thread and reply field, intervention cards, routine review, direct-route previews, progress and results), `Routines` (step list), `Attention` (`AttentionChime`), `DesignSystem` |
 | `DottoCoreTests/` | Suites mirroring `Core/`, plus `Support/` (harness and fixtures) and `TestDoubles/` |
 | `scripts/` | `typecheck.sh`, `run-core-tests.sh`, and `release.sh` (owner only) |
 

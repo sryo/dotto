@@ -41,7 +41,7 @@ extension TaskSessionController {
         !anotherTaskCanStart
     }
 
-    private var summonGestureReducesMotion: Bool {
+    var summonGestureReducesMotion: Bool {
         cursorStyleConfiguration.reducesMotion(systemReduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
 

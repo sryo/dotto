@@ -43,7 +43,11 @@ final class TaskSessionScope: ObservableObject {
         inSession { $0.editItemLabel(itemIdentifier: itemIdentifier, newLabel: newLabel) }
     }
     func sendPlannerReply(_ replyText: String) { inSession { $0.sendPlannerReply(replyText) } }
-    func reopenCommandBarWithPreviousCommand() { inSession { $0.reopenCommandBarWithPreviousCommand() } }
+    /// The pill that opens submits into this session, so the session is focused (outside any `withSession`) first.
+    func reopenCommandBarWithPreviousCommand() {
+        taskSessionController.focus(session)
+        taskSessionController.reopenCommandBarWithPreviousCommand()
+    }
     func replanUsingCursorInstead() { inSession { $0.replanUsingCursorInstead() } }
     func planAgainAfterDirectRouteValidationFailure() { inSession { $0.planAgainAfterDirectRouteValidationFailure() } }
     func revealDirectRouteScopeInFinder() { inSession { $0.revealDirectRouteScopeInFinder() } }

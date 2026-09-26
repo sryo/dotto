@@ -315,12 +315,22 @@ final class TaskSessionController: ObservableObject {
         assignTaskColor(to: sessionForCommand)
         captureFrontmostApplicationAsTarget()
         applicationFrontmostWhenCommandBarWasSummoned = NSWorkspace.shared.frontmostApplication
-        summonOriginOfNextCommandInTopLeftGlobalPoints = ScreenGeometry.mouseLocationInTopLeftGlobalPoints
-        commandBarPanelController?.showCommandBar(prefilledCommandText: "")
+        showCommandPillAtPointer(prefilledCommandText: "")
     }
 
+    /// Edit command, on a failed task: the pill opens again at the pointer with the task's command in it, for the same
+    /// session (which the caller has focused).
     func reopenCommandBarWithPreviousCommand() {
-        commandBarPanelController?.showCommandBar(prefilledCommandText: lastSubmittedCommandText)
+        showCommandPillAtPointer(prefilledCommandText: lastSubmittedCommandText)
+    }
+
+    private func showCommandPillAtPointer(prefilledCommandText: String) {
+        let pointerLocation = ScreenGeometry.mouseLocationInTopLeftGlobalPoints
+        summonOriginOfNextCommandInTopLeftGlobalPoints = pointerLocation
+        commandBarPanelController?.showCommandPill(
+            atTopLeftGlobalPoint: pointerLocation, reducesMotion: summonGestureReducesMotion,
+            prefilledCommandText: prefilledCommandText,
+            onDismiss: { [weak self] in self?.previousApplicationTracker.handActivationBackIfThisAppIsActive() })
     }
 
     func showChecklist() {
