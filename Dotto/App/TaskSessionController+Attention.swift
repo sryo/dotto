@@ -28,7 +28,7 @@ extension TaskSessionController {
     /// Each task's cursor carries its own questions; what the user answers there goes back to that task.
     func wireAttentionDelivery(for session: TaskSession) {
         session.cursorController.liveViewCorner = liveViewCorner
-        session.cursorController.styleConfiguration = cursorStyleConfiguration
+        session.cursorController.styleConfiguration = styleConfiguration(for: session)
         // Resume, Pause, Stop and Cancel carry no request; the pill they were clicked on says whose they are.
         session.cursorController.onDecisionOptionChosen = { [weak self, weak session] userDecisionAnswer in
             guard let self, let session else { return }

@@ -5,7 +5,7 @@ import SwiftUI
 /// buttons. The card never grows past `maximumCardHeight`, the room its anchor leaves on screen: the scroll region
 /// takes what the header and footer leave.
 struct ChecklistPanelView: View {
-    @ObservedObject var taskSessionController: TaskSessionController
+    @ObservedObject var sessionScope: TaskSessionScope
     @ObservedObject var replyComposerModel: PlannerReplyComposerModel
     let maximumCardHeight: CGFloat
     let onSubmitReplyDraft: () -> Void
@@ -114,27 +114,27 @@ struct ChecklistPanelView: View {
     }
 
     private var stateSections: PopoverSections {
-        switch taskSessionController.sessionState {
+        switch sessionScope.sessionState {
         case .idle:
             return PopoverSections()
 
         case .planning:
             return threadSections(footer: AnyView(HStack(spacing: 8) {
                 Spacer(minLength: 0)
-                ChecklistStopTaskButton(taskSessionController: taskSessionController)
+                ChecklistStopTaskButton(sessionScope: sessionScope)
             }))
 
         case .plannerNeedsInput(_, let plannerQuestion):
             if plannerQuestion.acceptsReply {
                 return threadSections(footer: AnyView(PlannerReplyComposer(
                     replyComposerModel: replyComposerModel, allowsFreeText: plannerQuestion.allowsFreeText,
-                    taskColor: taskSessionController.cursorStyleConfiguration.taskAccentColor,
+                    taskColor: sessionScope.taskStyleConfiguration.taskAccentColor,
                     onSend: onSubmitReplyDraft)))
             }
             return threadSections(footer: AnyView(HStack(spacing: 8) {
-                Button("Edit command") { taskSessionController.reopenCommandBarWithPreviousCommand() }
+                Button("Edit command") { sessionScope.reopenCommandBarWithPreviousCommand() }
                     .dsPrimaryButtonStyle()
-                Button("Close") { taskSessionController.dismissFinishedTask() }
+                Button("Close") { sessionScope.dismissFinishedTask() }
                     .dsSecondaryButtonStyle()
             }))
 
@@ -142,9 +142,9 @@ struct ChecklistPanelView: View {
             if let directRoutePlan = checklist.directRoutePlan {
                 return directRouteApprovalSections(checklist: checklist, directRoutePlan: directRoutePlan)
             }
-            let subtitle = taskSessionController.attachedRoutine.map { attachedRoutine in
+            let subtitle = sessionScope.attachedRoutine.map { attachedRoutine in
                 "Using routine “\(attachedRoutine.name)” · \(attachedRoutine.steps.count) steps"
-            } ?? (taskSessionController.currentTaskFocusPolicy == .backgroundOnly
+            } ?? (sessionScope.currentTaskFocusPolicy == .backgroundOnly
                    ? "Dotto won't bring the target forward. Steps needing it in front stay undone."
                    : "Review the checklist, then run it.")
             return PopoverSections(
@@ -153,9 +153,9 @@ struct ChecklistPanelView: View {
                     conversationDisclosureButton
                 }),
                 scrollContent: AnyView(VStack(alignment: .leading, spacing: 12) {
-                    if isConversationShownWithChecklist && taskSessionController.plannerConversationTranscript.containsPlannerMessages {
-                        PlannerThreadView(transcript: taskSessionController.plannerConversationTranscript,
-                                          taskColor: taskSessionController.cursorStyleConfiguration.taskAccentColor,
+                    if isConversationShownWithChecklist && sessionScope.plannerConversationTranscript.containsPlannerMessages {
+                        PlannerThreadView(transcript: sessionScope.plannerConversationTranscript,
+                                          taskColor: sessionScope.taskStyleConfiguration.taskAccentColor,
                                           typingIndicatorText: nil, onChoiceChosen: nil)
                         Divider().overlay(DesignSystem.Colors.borderSubtle)
                     }
@@ -169,9 +169,9 @@ struct ChecklistPanelView: View {
                     header: AnyView(panelHeader(title: checklist.title, subtitle: DirectRoutePreviewView.subtitle(for: directRoutePlan))),
                     scrollContent: AnyView(directRouteProgress(checklist: checklist, directRoutePlan: directRoutePlan)),
                     footer: AnyView(HStack(spacing: 8) {
-                        Button("Pause") { taskSessionController.pauseTask() }
+                        Button("Pause") { sessionScope.pauseTask() }
                             .dsSecondaryButtonStyle()
-                        ChecklistStopTaskButton(taskSessionController: taskSessionController)
+                        ChecklistStopTaskButton(sessionScope: sessionScope)
                     }))
             }
             return PopoverSections(
@@ -182,12 +182,12 @@ struct ChecklistPanelView: View {
                     metricsSummaryLine
                     statusLineText
                     HStack(spacing: 8) {
-                        Button("Pause") { taskSessionController.pauseTask() }
+                        Button("Pause") { sessionScope.pauseTask() }
                             .dsSecondaryButtonStyle()
                         if currentItemIdentifier != nil {
-                            ChecklistSkipItemButton(taskSessionController: taskSessionController, title: "Skip item")
+                            ChecklistSkipItemButton(sessionScope: sessionScope, title: "Skip item")
                         }
-                        ChecklistStopTaskButton(taskSessionController: taskSessionController)
+                        ChecklistStopTaskButton(sessionScope: sessionScope)
                     }
                 }))
 
@@ -195,7 +195,7 @@ struct ChecklistPanelView: View {
             return PopoverSections(
                 header: AnyView(VStack(alignment: .leading, spacing: 12) {
                     panelHeader(title: checklist.title, subtitle: nil)
-                    ChecklistPausedBanner(taskSessionController: taskSessionController, pauseReason: pauseReason,
+                    ChecklistPausedBanner(sessionScope: sessionScope, pauseReason: pauseReason,
                                           currentItemIdentifier: currentItemIdentifier)
                 }),
                 scrollContent: checklist.directRoutePlan.map { directRoutePlan in
@@ -207,25 +207,25 @@ struct ChecklistPanelView: View {
             return PopoverSections(
                 header: AnyView(VStack(alignment: .leading, spacing: 12) {
                     panelHeader(title: checklist.title, subtitle: nil)
-                    ChecklistItemFailureDecisionCard(taskSessionController: taskSessionController, request: request)
+                    ChecklistItemFailureDecisionCard(sessionScope: sessionScope, request: request)
                 }),
                 scrollContent: AnyView(itemRows(checklist: checklist, currentItemIdentifier: request.itemIdentifier, isEditable: false)),
                 scrollTargetIdentifier: request.itemIdentifier)
 
         case .demonstrating(let checklist, let itemIdentifier, let isCompilingRoutine):
-            if let taughtRoutine = taskSessionController.taughtRoutineAwaitingReview {
+            if let taughtRoutine = sessionScope.taughtRoutineAwaitingReview {
                 return PopoverSections(
                     header: AnyView(panelHeader(title: checklist.title, subtitle: nil)),
                     scrollContent: AnyView(RoutineReviewCard(
                         routine: taughtRoutine,
                         closingExplanation: "Saving also uses it for the rest of this checklist.",
-                        onDiscard: { taskSessionController.discardTaughtRoutine() },
-                        onSave: { taskSessionController.saveTaughtRoutine() })))
+                        onDiscard: { sessionScope.discardTaughtRoutine() },
+                        onSave: { sessionScope.saveTaughtRoutine() })))
             }
             return PopoverSections(
                 header: AnyView(VStack(alignment: .leading, spacing: 12) {
                     panelHeader(title: checklist.title, subtitle: nil)
-                    ChecklistTeachingCard(taskSessionController: taskSessionController, checklist: checklist, itemIdentifier: itemIdentifier,
+                    ChecklistTeachingCard(sessionScope: sessionScope, checklist: checklist, itemIdentifier: itemIdentifier,
                                           isCompilingRoutine: isCompilingRoutine)
                 }),
                 scrollContent: AnyView(itemRows(checklist: checklist, currentItemIdentifier: itemIdentifier, isEditable: false)),
@@ -235,7 +235,7 @@ struct ChecklistPanelView: View {
             return PopoverSections(
                 header: AnyView(VStack(alignment: .leading, spacing: 12) {
                     panelHeader(title: checklist.title, subtitle: nil)
-                    ChecklistSafetyConfirmationCard(taskSessionController: taskSessionController, request: request)
+                    ChecklistSafetyConfirmationCard(sessionScope: sessionScope, request: request)
                 }),
                 scrollContent: checklist.directRoutePlan.map { directRoutePlan in
                     AnyView(directRouteProgress(checklist: checklist, directRoutePlan: directRoutePlan))
@@ -294,47 +294,47 @@ struct ChecklistPanelView: View {
                 conversationDisclosureButton
             }),
             scrollContent: AnyView(VStack(alignment: .leading, spacing: 12) {
-                if isConversationShownWithChecklist && taskSessionController.plannerConversationTranscript.containsPlannerMessages {
-                    PlannerThreadView(transcript: taskSessionController.plannerConversationTranscript,
-                                      taskColor: taskSessionController.cursorStyleConfiguration.taskAccentColor,
+                if isConversationShownWithChecklist && sessionScope.plannerConversationTranscript.containsPlannerMessages {
+                    PlannerThreadView(transcript: sessionScope.plannerConversationTranscript,
+                                      taskColor: sessionScope.taskStyleConfiguration.taskAccentColor,
                                       typingIndicatorText: nil, onChoiceChosen: nil)
                     Divider().overlay(DesignSystem.Colors.borderSubtle)
                 }
                 DirectRoutePreviewView(directRoutePlan: directRoutePlan,
-                                       directRouteSessionState: taskSessionController.directRouteSessionState)
+                                       directRouteSessionState: sessionScope.directRouteSessionState)
             }),
-            footer: AnyView(DirectRouteApprovalFooter(taskSessionController: taskSessionController, directRoutePlan: directRoutePlan)))
+            footer: AnyView(DirectRouteApprovalFooter(sessionScope: sessionScope, directRoutePlan: directRoutePlan)))
     }
 
     private func directRouteProgress(checklist: Checklist, directRoutePlan: DirectRoutePlan) -> some View {
         DirectRouteProgressView(checklist: checklist, directRoutePlan: directRoutePlan,
-                                directRouteSessionState: taskSessionController.directRouteSessionState,
-                                statusLine: taskSessionController.statusLine)
+                                directRouteSessionState: sessionScope.directRouteSessionState,
+                                statusLine: sessionScope.statusLine)
     }
 
     private func directRouteResultSections(checklist: Checklist, directRoutePlan: DirectRoutePlan, subtitle: String) -> PopoverSections {
         PopoverSections(
             header: AnyView(panelHeader(title: checklist.title, subtitle: subtitle)),
             scrollContent: AnyView(DirectRouteResultView(checklist: checklist, directRoutePlan: directRoutePlan,
-                                                         directRouteSessionState: taskSessionController.directRouteSessionState)),
-            footer: AnyView(DirectRouteResultFooter(taskSessionController: taskSessionController,
-                                                    directRouteSessionState: taskSessionController.directRouteSessionState,
+                                                         directRouteSessionState: sessionScope.directRouteSessionState)),
+            footer: AnyView(DirectRouteResultFooter(sessionScope: sessionScope,
+                                                    directRouteSessionState: sessionScope.directRouteSessionState,
                                                     checklist: checklist, directRoutePlan: directRoutePlan)))
     }
 
     /// Planning and the planner's questions: the thread from the command on, newest at the bottom.
     private func threadSections(footer: AnyView) -> PopoverSections {
-        let transcript = taskSessionController.plannerConversationTranscript
+        let transcript = sessionScope.plannerConversationTranscript
         let typingIndicatorText = typingIndicatorTextWhilePlanning
-        let isWaitingForReply = taskSessionController.isWaitingForPlannerReply
+        let isWaitingForReply = sessionScope.isWaitingForPlannerReply
         return PopoverSections(
             scrollContent: AnyView(PlannerThreadView(
                 transcript: transcript,
-                taskColor: taskSessionController.cursorStyleConfiguration.taskAccentColor,
+                taskColor: sessionScope.taskStyleConfiguration.taskAccentColor,
                 typingIndicatorText: typingIndicatorText,
                 onChoiceChosen: isWaitingForReply ? { choiceLabel in
                     replyComposerModel.draftText = ""
-                    taskSessionController.sendPlannerReply(choiceLabel)
+                    sessionScope.sendPlannerReply(choiceLabel)
                 } : nil)),
             scrollTargetIdentifier: PlannerThreadView.bottomScrollTargetIdentifier(transcript: transcript,
                                                                                    showsTypingIndicator: typingIndicatorText != nil),
@@ -344,10 +344,10 @@ struct ChecklistPanelView: View {
 
     /// While the planner works: what it is reading, or that it is thinking. nil while it waits on the user.
     private var typingIndicatorTextWhilePlanning: String? {
-        guard case .planning = taskSessionController.sessionState else { return nil }
-        switch taskSessionController.currentPlanningProgress {
+        guard case .planning = sessionScope.sessionState else { return nil }
+        switch sessionScope.currentPlanningProgress {
         case .readingApplication, .takingScreenshot, .readingFolder, .writingChecklist:
-            return taskSessionController.currentPlanningProgress?.statusLineText
+            return sessionScope.currentPlanningProgress?.statusLineText
         case .thinking, nil:
             return "Dotto is thinking…"
         }
@@ -355,7 +355,7 @@ struct ChecklistPanelView: View {
 
     @ViewBuilder
     private var conversationDisclosureButton: some View {
-        if taskSessionController.plannerConversationTranscript.containsPlannerMessages {
+        if sessionScope.plannerConversationTranscript.containsPlannerMessages {
             HoverAwarePlainButton(action: { isConversationShownWithChecklist.toggle() }) { isHovered in
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.right")
@@ -388,7 +388,7 @@ struct ChecklistPanelView: View {
     }
 
     private var statusLineText: some View {
-        Text(taskSessionController.statusLine)
+        Text(sessionScope.statusLine)
             .font(.system(size: 12, weight: .medium))
             .foregroundColor(DesignSystem.Colors.textSecondary)
             .lineLimit(2)
@@ -396,7 +396,7 @@ struct ChecklistPanelView: View {
 
     @ViewBuilder
     private var metricsSummaryLine: some View {
-        if let metricsSummaryLine = taskSessionController.currentRunMetrics?.summaryLine {
+        if let metricsSummaryLine = sessionScope.currentRunMetrics?.summaryLine {
             Text(metricsSummaryLine)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(DesignSystem.Colors.accentText)
@@ -405,11 +405,11 @@ struct ChecklistPanelView: View {
 
     private var completionFooter: some View {
         HStack(spacing: 8) {
-            if taskSessionController.currentAuditLogFileURL != nil {
-                Button("Open log") { taskSessionController.openCurrentAuditLog() }
+            if sessionScope.currentAuditLogFileURL != nil {
+                Button("Open log") { sessionScope.openCurrentAuditLog() }
                     .dsSecondaryButtonStyle()
             }
-            Button("Done") { taskSessionController.dismissFinishedTask() }
+            Button("Done") { sessionScope.dismissFinishedTask() }
                 .dsPrimaryButtonStyle()
         }
     }
@@ -417,18 +417,18 @@ struct ChecklistPanelView: View {
     private func approvalFooter(checklist: Checklist) -> some View {
         let includedItemCount = checklist.includedItems.count
         // A routine needs a parameter to vary per item, so an item without parameters can't be taught.
-        let canTeachFirstItem = taskSessionController.attachedRoutine == nil
+        let canTeachFirstItem = sessionScope.attachedRoutine == nil
             && checklist.includedItems.first(where: { $0.runStatus == .pending }).map { !$0.parameters.isEmpty } == true
         return VStack(spacing: 8) {
-            Button("Teach first item") { taskSessionController.startTeachingFirstItem() }
+            Button("Teach first item") { sessionScope.startTeachingFirstItem() }
                 .dsOutlinedButtonStyle()
                 .disabled(!canTeachFirstItem)
                 .nativeTooltip("Do item 1 yourself; Dotto learns it and does the rest")
             HStack(spacing: 8) {
-                Button("Cancel") { taskSessionController.cancelChecklist() }
+                Button("Cancel") { sessionScope.cancelChecklist() }
                     .dsSecondaryButtonStyle()
                 Button(includedItemCount == 1 ? "Run 1 item" : "Run \(includedItemCount) items") {
-                    taskSessionController.approveChecklistAndRun()
+                    sessionScope.approveChecklistAndRun()
                 }
                 .dsPrimaryButtonStyle()
                 .disabled(includedItemCount == 0)
@@ -462,12 +462,12 @@ struct ChecklistPanelView: View {
     /// (the panel has no room for both), like a taught routine's review.
     @ViewBuilder
     private func itemListOrLearnedRoutineReview(checklist: Checklist) -> some View {
-        if let learnedRoutine = taskSessionController.learnedRoutineAwaitingReview {
+        if let learnedRoutine = sessionScope.learnedRoutineAwaitingReview {
             RoutineReviewCard(
                 routine: learnedRoutine,
                 closingExplanation: "Dotto learned this while running the checklist. Save it to run it on another list later.",
-                onDiscard: { taskSessionController.discardLearnedRoutine() },
-                onSave: { taskSessionController.saveLearnedRoutine() })
+                onDiscard: { sessionScope.discardLearnedRoutine() },
+                onSave: { sessionScope.saveLearnedRoutine() })
         } else {
             itemRows(checklist: checklist, currentItemIdentifier: nil, isEditable: false)
         }
@@ -480,7 +480,7 @@ struct ChecklistPanelView: View {
                     item: item,
                     isCurrentItem: item.itemIdentifier == currentItemIdentifier,
                     isEditable: isEditable,
-                    taskSessionController: taskSessionController
+                    sessionScope: sessionScope
                 )
                 .id(item.itemIdentifier)
             }

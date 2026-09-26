@@ -224,7 +224,7 @@ struct DirectRouteUndoReportView: View {
 
 /// The buttons under a finished direct route: Undo task, Show in Finder or Plan again, Open log and Done.
 struct DirectRouteResultFooter: View {
-    @ObservedObject var taskSessionController: TaskSessionController
+    @ObservedObject var sessionScope: TaskSessionScope
     @ObservedObject var directRouteSessionState: DirectRouteSessionState
     let checklist: Checklist
     let directRoutePlan: DirectRoutePlan
@@ -233,7 +233,7 @@ struct DirectRouteResultFooter: View {
         VStack(alignment: .leading, spacing: 8) {
             if let undoableJournalIdentifier {
                 Button(directRouteSessionState.lastUndoReport == nil ? "Undo task" : "Undo the rest") {
-                    taskSessionController.undoDirectRouteTask(journalIdentifier: undoableJournalIdentifier)
+                    sessionScope.undoDirectRouteTask(journalIdentifier: undoableJournalIdentifier)
                 }
                     .dsOutlinedButtonStyle()
                     .disabled(directRouteSessionState.isUndoInProgress)
@@ -241,18 +241,18 @@ struct DirectRouteResultFooter: View {
             }
             HStack(spacing: 8) {
                 if planWasRefusedBeforeAnythingChanged {
-                    Button("Plan again") { taskSessionController.planAgainAfterDirectRouteValidationFailure() }
+                    Button("Plan again") { sessionScope.planAgainAfterDirectRouteValidationFailure() }
                         .dsSecondaryButtonStyle()
                         .nativeTooltip("The folder changed since the plan was made; plan the same command again")
                 } else if case .fileOperations = directRoutePlan {
-                    Button("Show in Finder") { taskSessionController.revealDirectRouteScopeInFinder() }
+                    Button("Show in Finder") { sessionScope.revealDirectRouteScopeInFinder() }
                         .dsSecondaryButtonStyle()
                 }
-                if taskSessionController.currentAuditLogFileURL != nil {
-                    Button("Open log") { taskSessionController.openCurrentAuditLog() }
+                if sessionScope.currentAuditLogFileURL != nil {
+                    Button("Open log") { sessionScope.openCurrentAuditLog() }
                         .dsSecondaryButtonStyle()
                 }
-                Button("Done") { taskSessionController.dismissFinishedTask() }
+                Button("Done") { sessionScope.dismissFinishedTask() }
                     .dsPrimaryButtonStyle()
             }
         }

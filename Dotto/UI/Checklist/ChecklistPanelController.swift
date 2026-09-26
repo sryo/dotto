@@ -12,7 +12,7 @@ final class ChecklistPanelController {
     /// Used only until the content has reported its height once.
     private static let fallbackContentHeight: CGFloat = 200
 
-    private let taskSessionController: TaskSessionController
+    private let sessionScope: TaskSessionScope
     private var checklistPanel: ChecklistKeyablePanel?
     private var checklistHostingView: NSHostingView<AnyView>?
     private var panelFrameApplier: DeferredPanelFrameApplier?
@@ -29,8 +29,8 @@ final class ChecklistPanelController {
     /// checklist chevron points.
     var onVisibilityChanged: ((Bool) -> Void)?
 
-    init(taskSessionController: TaskSessionController) {
-        self.taskSessionController = taskSessionController
+    init(sessionScope: TaskSessionScope) {
+        self.sessionScope = sessionScope
     }
 
     var isVisible: Bool {
@@ -45,7 +45,7 @@ final class ChecklistPanelController {
         let wasVisible = checklistPanel.isVisible
 
         if !wasVisible || explicitAnchor != nil {
-            let anchor = explicitAnchor ?? taskSessionController.checklistPanelAnchor()
+            let anchor = explicitAnchor ?? sessionScope.checklistPanelAnchor()
             currentAnchor = anchor
             currentPlacement = nil
             // Set before measuring: the content lays itself out within the room this anchor leaves on screen.
@@ -70,7 +70,7 @@ final class ChecklistPanelController {
     }
 
     private var reducesMotion: Bool {
-        taskSessionController.cursorStyleConfiguration.reducesMotion(
+        sessionScope.taskStyleConfiguration.reducesMotion(
             systemReduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
 
@@ -131,7 +131,7 @@ final class ChecklistPanelController {
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, let checklistPanel = self.checklistPanel, checklistPanel.isVisible,
-                      self.taskSessionController.isWaitingForPlannerReply else { return }
+                      self.sessionScope.isWaitingForPlannerReply else { return }
                 if !checklistPanel.isKeyWindow { checklistPanel.makeKey() }
                 self.replyComposerModel.requestFocus()
             }
@@ -172,20 +172,20 @@ final class ChecklistPanelController {
         // Buttons work without taking keyboard focus from the target app; only the label text fields make the panel key.
         checklistPanel.becomesKeyOnlyIfNeeded = true
         checklistPanel.onEscapeKeyPressed = { [weak self] in
-            guard let taskSessionController = self?.taskSessionController else { return false }
-            if taskSessionController.sessionState.isBusy {
-                taskSessionController.stopTask()
+            guard let sessionScope = self?.sessionScope else { return false }
+            if sessionScope.sessionState.isBusy {
+                sessionScope.stopTask()
                 return true
             }
             // Esc on the planner's question closes the thread and ends the task, like Close.
-            if case .plannerNeedsInput = taskSessionController.sessionState {
-                taskSessionController.dismissFinishedTask()
+            if case .plannerNeedsInput = sessionScope.sessionState {
+                sessionScope.dismissFinishedTask()
                 return true
             }
             return false
         }
         checklistPanel.onReturnKeyPressed = { [weak self] isShiftPressed, focusedTextView in
-            guard let self, self.taskSessionController.isWaitingForPlannerReply,
+            guard let self, self.sessionScope.isWaitingForPlannerReply,
                   let currentQuestion = self.currentPlannerQuestion, currentQuestion.allowsFreeText else { return false }
             if isShiftPressed {
                 focusedTextView?.insertNewlineIgnoringFieldEditor(nil)
@@ -195,7 +195,7 @@ final class ChecklistPanelController {
             return true
         }
         let hostingView = NSHostingView(rootView: AnyView(ChecklistPopoverView(
-            taskSessionController: taskSessionController,
+            sessionScope: sessionScope,
             layoutModel: layoutModel,
             replyComposerModel: replyComposerModel,
             onSubmitReplyDraft: { [weak self] in self?.submitReplyDraft() },
@@ -219,7 +219,7 @@ final class ChecklistPanelController {
     }
 
     private var currentPlannerQuestion: PlannerQuestion? {
-        if case .plannerNeedsInput(_, let plannerQuestion) = taskSessionController.sessionState { return plannerQuestion }
+        if case .plannerNeedsInput(_, let plannerQuestion) = sessionScope.sessionState { return plannerQuestion }
         return nil
     }
 
@@ -228,7 +228,7 @@ final class ChecklistPanelController {
         let draftText = replyComposerModel.draftText
         guard !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         replyComposerModel.draftText = ""
-        taskSessionController.sendPlannerReply(draftText)
+        sessionScope.sendPlannerReply(draftText)
     }
 
     private func measuredContentHeight() -> CGFloat {
@@ -296,7 +296,7 @@ final class PlannerReplyComposerModel: ObservableObject {
 
 /// The checklist card with its tail on the edge that faces the cursor.
 private struct ChecklistPopoverView: View {
-    @ObservedObject var taskSessionController: TaskSessionController
+    @ObservedObject var sessionScope: TaskSessionScope
     @ObservedObject var layoutModel: ChecklistPopoverLayoutModel
     let replyComposerModel: PlannerReplyComposerModel
     let onSubmitReplyDraft: () -> Void
@@ -305,13 +305,13 @@ private struct ChecklistPopoverView: View {
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
 
     private var reducesMotion: Bool {
-        taskSessionController.cursorStyleConfiguration.reducesMotion(systemReduceMotion: systemReduceMotion)
+        sessionScope.taskStyleConfiguration.reducesMotion(systemReduceMotion: systemReduceMotion)
     }
 
     var body: some View {
         let tailLength = AttachedPanelPlacementCalculator.tailLength
         let tail = layoutModel.tail
-        return ChecklistPanelView(taskSessionController: taskSessionController, replyComposerModel: replyComposerModel,
+        return ChecklistPanelView(sessionScope: sessionScope, replyComposerModel: replyComposerModel,
                                   maximumCardHeight: layoutModel.maximumCardHeight, onSubmitReplyDraft: onSubmitReplyDraft,
                                   onContentHeightChange: onContentHeightChange)
             .padding(.top, tail?.edge == .top ? tailLength : 0)

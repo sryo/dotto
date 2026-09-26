@@ -164,7 +164,7 @@ final class TaskSessionController: ObservableObject {
 
     /// The per-task services report back into their own session.
     private func wireSessionServices(_ session: TaskSession) {
-        let checklistPanelController = ChecklistPanelController(taskSessionController: self)
+        let checklistPanelController = ChecklistPanelController(sessionScope: TaskSessionScope(taskSessionController: self, session: session))
         session.checklistPanelController = checklistPanelController
         session.targetWindowObserver.onTargetWindowEvent = { [weak self, weak session] targetWindowEvent in
             guard let self, let session else { return }
@@ -405,6 +405,25 @@ final class TaskSessionController: ObservableObject {
         currentAbortSignal = taskStartResources.abortSignal
         currentTaskResourceBudget = taskStartResources.taskResourceBudget
         currentSession.actionBackend = taskStartResources.actionBackend
+        assignTaskColor(to: currentSession)
+    }
+
+    /// The owner's style with this session's own task color.
+    func styleConfiguration(for session: TaskSession) -> CursorStyleConfiguration {
+        var sessionStyleConfiguration = cursorStyleConfiguration
+        if let taskColorHex = session.taskColorHex { sessionStyleConfiguration.taskColorHex = taskColorHex }
+        return sessionStyleConfiguration
+    }
+
+    /// The current session's style, for its own panels.
+    var taskStyleConfiguration: CursorStyleConfiguration { styleConfiguration(for: currentSession) }
+
+    /// A color no other task that is still going uses, so the user can tell running tasks apart.
+    private func assignTaskColor(to session: TaskSession) {
+        let colorHexesInUse = sessions.filter { $0 !== session && $0.sessionState != .idle }.compactMap(\.taskColorHex)
+        session.taskColorHex = TaskColorPalette.colorHex(forNewTaskWithOwnerTaskColorHex: cursorStyleConfiguration.taskColorHex,
+                                                         colorHexesInUse: colorHexesInUse)
+        session.cursorController.styleConfiguration = styleConfiguration(for: session)
     }
 
     func resetPerTaskResources() {

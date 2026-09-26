@@ -7,7 +7,7 @@ struct ChecklistItemRow: View {
     let item: ChecklistItem
     let isCurrentItem: Bool
     let isEditable: Bool
-    @ObservedObject var taskSessionController: TaskSessionController
+    @ObservedObject var sessionScope: TaskSessionScope
 
     @State private var isExpanded = false
     @State private var isHovered = false
@@ -93,7 +93,7 @@ struct ChecklistItemRow: View {
                 TextField("Item label", text: Binding(
                     get: { item.label },
                     set: { newLabel in
-                        taskSessionController.editItemLabel(itemIdentifier: item.itemIdentifier, newLabel: newLabel)
+                        sessionScope.editItemLabel(itemIdentifier: item.itemIdentifier, newLabel: newLabel)
                     }
                 ))
                 .textFieldStyle(.plain)
@@ -127,7 +127,7 @@ struct ChecklistItemRow: View {
     private var leadingIndicator: some View {
         if isEditable {
             HoverAwarePlainButton(action: {
-                taskSessionController.setItemIncluded(itemIdentifier: item.itemIdentifier, isIncluded: !item.isIncludedByUser)
+                sessionScope.setItemIncluded(itemIdentifier: item.itemIdentifier, isIncluded: !item.isIncludedByUser)
             }) { isHovered in
                 Image(systemName: item.isIncludedByUser ? "checkmark.square.fill" : "square")
                     .font(.system(size: 14))

@@ -4,7 +4,7 @@ import SwiftUI
 // confirmation.
 
 struct ChecklistPausedBanner: View {
-    @ObservedObject var taskSessionController: TaskSessionController
+    @ObservedObject var sessionScope: TaskSessionScope
     let pauseReason: TaskPauseReason
     let currentItemIdentifier: String?
 
@@ -12,14 +12,14 @@ struct ChecklistPausedBanner: View {
         VStack(alignment: .leading, spacing: 10) {
             ChecklistCardHeader(
                 iconSystemName: "pause.circle.fill", iconColor: DesignSystem.Colors.warning,
-                title: pauseReason.pausedStatusText(targetApplicationName: taskSessionController.targetApplication?.applicationName ?? "the app"))
+                title: pauseReason.pausedStatusText(targetApplicationName: sessionScope.targetApplication?.applicationName ?? "the app"))
             HStack(spacing: 8) {
-                Button("Resume") { taskSessionController.resumeTask() }
+                Button("Resume") { sessionScope.resumeTask() }
                     .dsPrimaryButtonStyle()
                 // Paused between items, the skip is kept for the item that starts next.
-                ChecklistSkipItemButton(taskSessionController: taskSessionController,
+                ChecklistSkipItemButton(sessionScope: sessionScope,
                                         title: currentItemIdentifier == nil ? "Skip next item" : "Skip item")
-                ChecklistStopTaskButton(taskSessionController: taskSessionController)
+                ChecklistStopTaskButton(sessionScope: sessionScope)
             }
         }
         .modifier(ChecklistCardBackground(borderColor: DesignSystem.Colors.warning))
@@ -27,7 +27,7 @@ struct ChecklistPausedBanner: View {
 }
 
 struct ChecklistItemFailureDecisionCard: View {
-    @ObservedObject var taskSessionController: TaskSessionController
+    @ObservedObject var sessionScope: TaskSessionScope
     let request: ChecklistItemFailureDecisionRequest
 
     var body: some View {
@@ -40,11 +40,11 @@ struct ChecklistItemFailureDecisionCard: View {
                 .font(.system(size: 11))
                 .foregroundColor(DesignSystem.Colors.textTertiary)
             HStack(spacing: 8) {
-                Button("Retry") { taskSessionController.answerPendingItemFailureDecision(.retry) }
+                Button("Retry") { sessionScope.answerPendingItemFailureDecision(.retry) }
                     .dsPrimaryButtonStyle()
-                Button("Skip item") { taskSessionController.answerPendingItemFailureDecision(.skipItem) }
+                Button("Skip item") { sessionScope.answerPendingItemFailureDecision(.skipItem) }
                     .dsSecondaryButtonStyle()
-                Button("Stop task") { taskSessionController.answerPendingItemFailureDecision(.stopTask) }
+                Button("Stop task") { sessionScope.answerPendingItemFailureDecision(.stopTask) }
                     .dsDestructiveButtonStyle()
             }
         }
@@ -53,7 +53,7 @@ struct ChecklistItemFailureDecisionCard: View {
 }
 
 struct ChecklistTeachingCard: View {
-    @ObservedObject var taskSessionController: TaskSessionController
+    @ObservedObject var sessionScope: TaskSessionScope
     let checklist: Checklist
     let itemIdentifier: String
     let isCompilingRoutine: Bool
@@ -73,11 +73,11 @@ struct ChecklistTeachingCard: View {
                 if let demonstratedItem, !demonstratedItem.parameters.isEmpty {
                     ChecklistItemParameterList(parameters: demonstratedItem.parameters)
                 }
-                Text(taskSessionController.recordedDemonstrationEventCount == 1
-                     ? "1 step recorded" : "\(taskSessionController.recordedDemonstrationEventCount) steps recorded")
+                Text(sessionScope.recordedDemonstrationEventCount == 1
+                     ? "1 step recorded" : "\(sessionScope.recordedDemonstrationEventCount) steps recorded")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(DesignSystem.Colors.textTertiary)
-                ForEach(taskSessionController.demonstrationRecordingNotes, id: \.self) { recordingNote in
+                ForEach(sessionScope.demonstrationRecordingNotes, id: \.self) { recordingNote in
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "exclamationmark.circle")
                             .font(.system(size: 11))
@@ -88,10 +88,10 @@ struct ChecklistTeachingCard: View {
             }
             HStack(spacing: 8) {
                 if !isCompilingRoutine {
-                    Button("Done") { taskSessionController.finishTeaching() }
+                    Button("Done") { sessionScope.finishTeaching() }
                         .dsPrimaryButtonStyle()
                 }
-                Button("Cancel") { taskSessionController.cancelTeaching() }
+                Button("Cancel") { sessionScope.cancelTeaching() }
                     .dsSecondaryButtonStyle()
             }
         }
@@ -100,7 +100,7 @@ struct ChecklistTeachingCard: View {
 }
 
 struct ChecklistSafetyConfirmationCard: View {
-    @ObservedObject var taskSessionController: TaskSessionController
+    @ObservedObject var sessionScope: TaskSessionScope
     let request: SafetyConfirmationRequest
 
     /// Pasting, bringing the app forward and attaching files get their own wording: "Skip item" alone wouldn't say
@@ -110,7 +110,7 @@ struct ChecklistSafetyConfirmationCard: View {
         case .pastingClipboard: return ("doc.on.clipboard", "Paste what's on your clipboard?", "Paste", "Don't paste (skip item)")
         case .bringingAppForward:
             let bringForwardTitle = CursorPresentationStateMapper.bringAppForwardQuestionText(
-                targetApplicationName: taskSessionController.targetApplication?.applicationName ?? "")
+                targetApplicationName: sessionScope.targetApplication?.applicationName ?? "")
             return ("macwindow.on.rectangle", bringForwardTitle, "Just this once", "Not now (skip item)")
         case .uploadingFiles: return ("paperclip", "Attach files?", "Attach", "Don't attach (skip item)")
         case .runningShortcut: return ("square.2.layers.3d", "Run your shortcut?", "Run shortcut", "Don't run")
@@ -121,7 +121,7 @@ struct ChecklistSafetyConfirmationCard: View {
 
     /// Everything a rest-of-task upload grant could cover: the files and folders attached to this task.
     private var attachedItemNames: [String] {
-        taskSessionController.currentUploadFileAllowlist.grants.map { uploadFileGrant in
+        sessionScope.currentUploadFileAllowlist.grants.map { uploadFileGrant in
             let itemName = (uploadFileGrant.canonicalPath as NSString).lastPathComponent
             return uploadFileGrant.isDirectory ? "\(itemName) (folder)" : itemName
         }
@@ -154,17 +154,17 @@ struct ChecklistSafetyConfirmationCard: View {
             if request.riskCategory == .bringingAppForward {
                 // The same app comes forward for many steps of one task, so the task-wide grant leads here. Each
                 // bring-forward still waits for the user to pause and counts down with Cancel.
-                Button("Allow for this task") { taskSessionController.answerPendingSafetyConfirmation(.allowForAllRemainingItems) }
+                Button("Allow for this task") { sessionScope.answerPendingSafetyConfirmation(.allowForAllRemainingItems) }
                     .dsPrimaryButtonStyle()
                 WrappingText("Dotto still waits until you pause and counts down before each time.",
                              size: 11, color: DesignSystem.Colors.textTertiary)
                 Button(cardPresentation.allowOnceTitle ?? "Just this once") {
-                    taskSessionController.answerPendingSafetyConfirmation(.allowOnce)
+                    sessionScope.answerPendingSafetyConfirmation(.allowOnce)
                 }
                 .dsOutlinedButtonStyle()
             } else {
                 Button(cardPresentation.allowOnceTitle ?? (request.isActionLevel ? "Allow this step only" : "Allow this item")) {
-                    taskSessionController.answerPendingSafetyConfirmation(.allowOnce)
+                    sessionScope.answerPendingSafetyConfirmation(.allowOnce)
                 }
                 .dsPrimaryButtonStyle()
                 // A shortcut asks before every run, so its card has no rest-of-task grant.
@@ -173,9 +173,9 @@ struct ChecklistSafetyConfirmationCard: View {
                 }
             }
             HStack(spacing: 8) {
-                Button(cardPresentation.skipTitle) { taskSessionController.answerPendingSafetyConfirmation(.skipItem) }
+                Button(cardPresentation.skipTitle) { sessionScope.answerPendingSafetyConfirmation(.skipItem) }
                     .dsSecondaryButtonStyle()
-                Button("Stop task") { taskSessionController.answerPendingSafetyConfirmation(.stopTask) }
+                Button("Stop task") { sessionScope.answerPendingSafetyConfirmation(.stopTask) }
                     .dsDestructiveButtonStyle()
             }
         }
@@ -186,7 +186,7 @@ struct ChecklistSafetyConfirmationCard: View {
         // Honest about scope: the grant covers one risk category, not every remaining item or step.
         VStack(alignment: .leading, spacing: 4) {
             Button("Allow \(request.riskCategory.userFacingScopeDescription) for the rest of this task") {
-                taskSessionController.answerPendingSafetyConfirmation(.allowForAllRemainingItems)
+                sessionScope.answerPendingSafetyConfirmation(.allowForAllRemainingItems)
             }
             .dsOutlinedButtonStyle()
             WrappingText("Dotto stops asking about this kind of step. Other risky steps still ask.",
@@ -211,20 +211,20 @@ struct ChecklistCardHeader: View {
 }
 
 struct ChecklistStopTaskButton: View {
-    @ObservedObject var taskSessionController: TaskSessionController
+    @ObservedObject var sessionScope: TaskSessionScope
 
     var body: some View {
-        Button("Stop") { taskSessionController.stopTask() }
+        Button("Stop") { sessionScope.stopTask() }
             .dsDestructiveButtonStyle()
     }
 }
 
 struct ChecklistSkipItemButton: View {
-    @ObservedObject var taskSessionController: TaskSessionController
+    @ObservedObject var sessionScope: TaskSessionScope
     let title: String
 
     var body: some View {
-        Button(title) { taskSessionController.skipCurrentItem() }
+        Button(title) { sessionScope.skipCurrentItem() }
             .dsSecondaryButtonStyle()
     }
 }

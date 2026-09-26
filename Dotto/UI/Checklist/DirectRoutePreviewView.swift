@@ -35,20 +35,20 @@ struct DirectRoutePreviewView: View {
 /// Cancel and Run for a direct route, plus "Use the cursor instead" for a script, which plans the same command
 /// again as an ordinary checklist.
 struct DirectRouteApprovalFooter: View {
-    @ObservedObject var taskSessionController: TaskSessionController
+    @ObservedObject var sessionScope: TaskSessionScope
     let directRoutePlan: DirectRoutePlan
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if case .script = directRoutePlan {
-                Button("Use the cursor instead") { taskSessionController.replanUsingCursorInstead() }
+                Button("Use the cursor instead") { sessionScope.replanUsingCursorInstead() }
                     .dsOutlinedButtonStyle()
                     .nativeTooltip("Plan this again as a checklist Dotto does with its cursor")
             }
             HStack(spacing: 8) {
-                Button("Cancel") { taskSessionController.cancelChecklist() }
+                Button("Cancel") { sessionScope.cancelChecklist() }
                     .dsSecondaryButtonStyle()
-                Button(runButtonTitle) { taskSessionController.approveChecklistAndRun() }
+                Button(runButtonTitle) { sessionScope.approveChecklistAndRun() }
                     .dsPrimaryButtonStyle()
             }
         }

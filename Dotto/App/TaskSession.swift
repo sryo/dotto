@@ -77,6 +77,8 @@ final class TaskSession: ObservableObject {
     var frontmostApplicationProcessIdentifierWhenCommandWasSubmitted: pid_t?
     /// The task's planner, kept while it waits for the user's reply so the conversation can go on.
     var currentChecklistPlanner: ChecklistPlanner?
+    /// The color this task's cursor, pill and checklist accents are drawn in (`TaskColorPalette`); nil until it starts.
+    var taskColorHex: String?
     /// This task's own backend. A stopped task that is still unwinding keeps using the one it started with.
     var actionBackend: ActionBackend?
 
@@ -99,6 +101,7 @@ final class TaskSession: ObservableObject {
         currentTaskSummonOriginInTopLeftGlobalPoints = nil
         currentChecklistPlanner = nil
         actionBackend = nil
+        taskColorHex = nil
         currentPlanningProgress = nil
         plannerConversationTranscript = PlannerConversationTranscript()
         userTakeoverDetector.reset()
