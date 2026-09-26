@@ -274,7 +274,7 @@ final class CommandBarPanelController {
                 horizontalSide: commandPillHandoff.horizontalSide, verticalSide: commandPillHandoff.verticalSide),
             heldStatusPillFrameInCanvas: statusPillFrame.offsetBy(dx: canvasOriginOffset.x, dy: canvasOriginOffset.y),
             submittedCommandText: submittedCommandPill.submittedCommandText,
-            taskColor: taskSessionController.cursorStyleConfiguration.taskAccentColor,
+            taskColor: taskSessionController.taskStyleConfiguration.taskAccentColor,
             cursorViewModel: cursorViewModel,
             onMorphFinished: { [weak self] in self?.finishCommandPillMorph(identifiedBy: commandPillMorphIdentifier) }
         )).withClearBackground().sizedOnlyByItsPanel()

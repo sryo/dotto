@@ -10,7 +10,7 @@ struct SavedRoutineRow: View {
     @State private var pastedListText = ""
     @State private var listPreparationErrorMessage: String?
 
-    private var isEnabled: Bool { !taskSessionController.sessionState.isBusy }
+    private var isEnabled: Bool { taskSessionController.anotherTaskCanStart }
     private var routineHasSecretLookingLiteral: Bool { RoutineLiteralInspector.routineHasSecretLookingLiteral(routine) }
 
     private var listPlaceholderText: String {

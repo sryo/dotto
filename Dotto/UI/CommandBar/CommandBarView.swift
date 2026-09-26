@@ -30,7 +30,7 @@ struct CommandBarView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
                 CursorArrowShape()
-                    .fill(taskSessionController.cursorStyleConfiguration.taskAccentColor)
+                    .fill(taskSessionController.taskStyleConfiguration.taskAccentColor)
                     .frame(width: 16, height: 16)
 
                 TextField("What should I do in \(targetApplicationName)?", text: $commandText)

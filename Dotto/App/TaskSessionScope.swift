@@ -67,4 +67,5 @@ final class TaskSessionScope: ObservableObject {
     func saveLearnedRoutine() { inSession { $0.saveLearnedRoutine() } }
     func discardLearnedRoutine() { inSession { $0.discardLearnedRoutine() } }
     func openCurrentAuditLog() { inSession { $0.openCurrentAuditLog() } }
+    func showChecklist() { inSession { $0.showChecklist() } }
 }

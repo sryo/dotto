@@ -36,9 +36,9 @@ extension TaskSessionController {
         summonGestureController.start()
     }
 
-    /// The same states in which the summon shortcut shows the checklist instead of the command bar.
+    /// Three tasks are going, or a demonstration is being recorded: no new task could start from a circle.
     var taskInProgressBlocksSummoning: Bool {
-        sessionState.isBusy || isAwaitingApproval || isDemonstrating
+        !anotherTaskCanStart
     }
 
     private var summonGestureReducesMotion: Bool {
@@ -66,6 +66,12 @@ extension TaskSessionController {
             displayUnderPointerIsFullScreen: displayUnderPointerIsFullScreen,
             screenIsLockedOrAsleep: screenIsLockedOrAsleep,
             excludedBundleIdentifiers: summonGestureExcludedBundleIdentifiers) else { return false }
+        // The app under the pointer may already have a task: its checklist opens instead of a new pill.
+        guard let sessionForCommand = sessionForNewTask(targetProcessIdentifier: summonedTargetApplication?.processIdentifier) else {
+            return false
+        }
+        focus(sessionForCommand)
+        assignTaskColor(to: sessionForCommand)
         targetApplication = summonedTargetApplication
         applicationFrontmostWhenCommandBarWasSummoned = NSWorkspace.shared.frontmostApplication
         summonOriginOfNextCommandInTopLeftGlobalPoints = topLeftGlobalPoint

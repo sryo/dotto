@@ -97,7 +97,7 @@ struct AnthropicAPIKeySection: View {
                     .dsTextButtonStyle()
                     Button("Remove") { isConfirmingRemove = true }
                         .dsTextButtonStyle()
-                        .disabled(taskSessionController.sessionState.isBusy)
+                        .disabled(taskSessionController.anySessionIsBusy)
                 }
             }
             if isReplacingKey {

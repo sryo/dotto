@@ -160,7 +160,7 @@ extension TaskSessionController {
     /// Nothing about a run that ended keeps calling for the user: no pulsing icon, no countdown waiting on Cancel.
     /// The cursor's own nudges stop with runFinished or when it's put away.
     func stopRunAttentionTimers() {
-        isMenuBarIconPulsing = false
+        setMenuBarIconPulse(false, for: currentSession)
         foregroundAssistCountdownWasCancelled = true
     }
 

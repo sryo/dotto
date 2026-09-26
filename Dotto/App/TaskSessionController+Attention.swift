@@ -90,13 +90,18 @@ extension TaskSessionController {
     // MARK: - Delivery
 
     private func deliverAttention(for attentionRequest: UserAttentionRequest?) {
-        attentionNotificationPoster.withdrawAll(exceptRequestIdentifier: attentionRequest?.requestIdentifier)
+        // Other tasks' questions may still be waiting; only this task's earlier ones are withdrawn.
+        var stillPendingRequestIdentifiers = Set(sessions.filter { $0 !== currentSession }.compactMap { otherSession in
+            otherSession.cursorController.viewModel.presentationState.attentionRequest?.requestIdentifier
+        })
+        if let attentionRequest { stillPendingRequestIdentifiers.insert(attentionRequest.requestIdentifier) }
+        attentionNotificationPoster.withdrawAll(exceptRequestIdentifiers: stillPendingRequestIdentifiers)
         guard let attentionRequest else {
-            isMenuBarIconPulsing = false
+            setMenuBarIconPulse(false, for: currentSession)
             return
         }
         let deliveryChannels = attentionDeliveryChannels(for: attentionRequest)
-        isMenuBarIconPulsing = deliveryChannels.pulsesMenuBarIcon && attentionRequest.kind != .finished
+        setMenuBarIconPulse(deliveryChannels.pulsesMenuBarIcon && attentionRequest.kind != .finished, for: currentSession)
         if deliveryChannels.playsSound {
             AttentionChime.play(for: attentionRequest.kind)
         }
@@ -113,6 +118,13 @@ extension TaskSessionController {
         return attentionPreferences.deliveryChannels(for: attentionRequest, targetOrThisAppIsFrontmost: targetOrThisAppIsFrontmost)
     }
 
+    /// The icon pulses while any task has a question waiting.
+    func setMenuBarIconPulse(_ wantsMenuBarIconPulse: Bool, for session: TaskSession) {
+        session.wantsMenuBarIconPulse = wantsMenuBarIconPulse
+        let anySessionWantsPulse = sessions.contains(where: \.wantsMenuBarIconPulse)
+        if isMenuBarIconPulsing != anySessionWantsPulse { isMenuBarIconPulsing = anySessionWantsPulse }
+    }
+
     // MARK: - Preferences
 
     func updateAttentionPreferences(_ updatePreferences: (inout AttentionPreferences) -> Void) {
@@ -120,7 +132,9 @@ extension TaskSessionController {
         if let encodedPreferences = try? JSONEncoder().encode(attentionPreferences) {
             UserDefaults.standard.set(encodedPreferences, forKey: Self.attentionPreferencesDefaultsKey)
         }
-        if !attentionPreferences.menuBarPulseEnabled { isMenuBarIconPulsing = false }
+        if !attentionPreferences.menuBarPulseEnabled {
+            for session in sessions { setMenuBarIconPulse(false, for: session) }
+        }
         if attentionPreferences.notificationsEnabled { attentionNotificationPoster.requestAuthorizationIfNeeded() }
     }
 

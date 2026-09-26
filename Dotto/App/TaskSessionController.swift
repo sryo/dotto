@@ -31,8 +31,9 @@ struct TaskStartResources {
     var actionBackend: ActionBackend
 }
 
-/// Composition-level coordinator for one task at a time: owns the task's `TaskSession`, drives the planner and
-/// executor, answers safety confirmations and keeps the command bar, checklist panel and acting cursor in sync.
+/// Composition-level coordinator for up to three tasks at once, each in a different app: owns their `TaskSession`s,
+/// drives each one's planner and executor, answers its safety confirmations and keeps the command bar and each task's
+/// checklist panel and cursor in sync.
 /// Split per flow into `+Planning`, `+Run`, `+Decisions`, `+Pause`, `+ExecutionObserving`, `+Teaching`,
 /// `+SavedRoutines`, `+Attention`, `+ForegroundAssist`, `+SummonHotkey`, `+SummonGesture`, `+AnthropicAPIKey` and `+DirectRoutes`. It deliberately conforms to none of the
 /// executor's protocols: only a run-scoped `TaskRunDelegateBridge` is ever handed to Core.
@@ -94,12 +95,8 @@ final class TaskSessionController: ObservableObject {
     /// Where the user last summoned Dotto, in top-left global points: the point the circle gesture fired at, or the
     /// pointer when the shortcut opened the command bar. The next command's task starts its cursor there.
     var summonOriginOfNextCommandInTopLeftGlobalPoints: CGPoint?
-    /// Survives resetPerTaskResources: a stopped run may still be unwinding (finishTask, a slow AX call)
-    /// after the user dismisses it, and the next run must not prepare the backend until it has.
-    var mostRecentlyStartedRunTask: Task<Void, Never>?
     /// The file system, journal, script and shortcut runners direct routes use; nil turns direct routes off.
     let directRouteExecutionDependencies: DirectRouteExecutionDependencies?
-    let directRouteSessionState = DirectRouteSessionState()
 
     /// Only one task's app may be brought forward at a time; every task's run takes its turn here.
     let foregroundAssistTurnQueue = ForegroundAssistTurnQueue()
@@ -145,6 +142,57 @@ final class TaskSessionController: ObservableObject {
         return body()
     }
 
+    /// Makes `session` the one the command bar, the menu bar and the next command work on. Called only from entry
+    /// points outside any `withSession`, which would otherwise put the previous session back.
+    func focus(_ session: TaskSession) {
+        currentSession = session
+    }
+
+    var sessionSummaries: [TaskSessionSummary] {
+        sessions.map { session in
+            var isRecordingDemonstration = false
+            var isShowingResult = false
+            switch session.sessionState {
+            case .demonstrating: isRecordingDemonstration = true
+            case .finished, .failed, .aborted: isShowingResult = true
+            default: break
+            }
+            return TaskSessionSummary(isActive: session.sessionState != .idle && !isShowingResult, isShowingResult: isShowingResult,
+                                      isRecordingDemonstration: isRecordingDemonstration,
+                                      targetProcessIdentifier: session.targetApplication?.processIdentifier)
+        }
+    }
+
+    /// Sessions holding a task (going, or a result not yet dismissed), in the order they were made.
+    var sessionsWithTasks: [TaskSession] { sessions.filter { $0.sessionState != .idle } }
+    var anySessionIsBusy: Bool { sessions.contains { $0.sessionState.isBusy } }
+    var anotherTaskCanStart: Bool { ConcurrentTaskPolicy.anotherTaskCanStart(sessions: sessionSummaries) }
+
+    /// The session a new task for the app with `targetProcessIdentifier` starts in: an idle one, or a new one while
+    /// fewer than three tasks are going. nil after showing the task that app already has (one task per app), or when
+    /// three tasks are already going.
+    func sessionForNewTask(targetProcessIdentifier: pid_t?) -> TaskSession? {
+        switch ConcurrentTaskPolicy.decision(forSummoningInto: targetProcessIdentifier, sessions: sessionSummaries) {
+        case .useSession(let index):
+            return sessions[index]
+        case .createSession:
+            let newSession = TaskSession(services: makeSessionServices())
+            adoptSession(newSession)
+            wireSessionServices(newSession)
+            return newSession
+        case .showExistingTask(let index):
+            withSession(sessions[index]) { checklistPanelController?.showChecklistPanel(makeKey: false) }
+            return nil
+        case .refuseBecauseTaskLimitReached:
+            NSSound.beep()
+            return nil
+        }
+    }
+
+    func stopAllTasks() {
+        for session in sessions { withSession(session) { stopTask() } }
+    }
+
     /// The session holding the pending question or answer with this identifier, if any.
     func session(owningAttentionRequestIdentifier attentionRequestIdentifier: String?) -> TaskSession? {
         guard let attentionRequestIdentifier else { return nil }
@@ -164,7 +212,9 @@ final class TaskSessionController: ObservableObject {
 
     /// The per-task services report back into their own session.
     private func wireSessionServices(_ session: TaskSession) {
-        let checklistPanelController = ChecklistPanelController(sessionScope: TaskSessionScope(taskSessionController: self, session: session))
+        let sessionScope = TaskSessionScope(taskSessionController: self, session: session)
+        session.scope = sessionScope
+        let checklistPanelController = ChecklistPanelController(sessionScope: sessionScope)
         session.checklistPanelController = checklistPanelController
         session.targetWindowObserver.onTargetWindowEvent = { [weak self, weak session] targetWindowEvent in
             guard let self, let session else { return }
@@ -230,16 +280,18 @@ final class TaskSessionController: ObservableObject {
     func stop() {
         permissionPollingTimer?.invalidate()
         permissionPollingTimer = nil
-        if sessionState.isBusy {
-            stopTask()
-        }
+        stopAllTasks()
         keyboardMonitor.stop()
         summonGestureController?.stop()
-        stopRunObservers()
+        for session in sessions {
+            withSession(session) {
+                stopRunObservers()
+                cursorController.putCursorAway()
+                checklistPanelController?.hideChecklistPanel()
+            }
+        }
         userInputObserver.stopObservingForEveryHolder()
-        cursorController.putCursorAway()
         commandBarPanelController?.hideCommandBar()
-        checklistPanelController?.hideChecklistPanel()
     }
 
     // MARK: - Command bar
@@ -249,11 +301,15 @@ final class TaskSessionController: ObservableObject {
         commandBarPanelController?.makeCommandBarKeyIfVisible()
     }
 
+    /// A new task for the app in front, unless that app already has one (its checklist opens instead) or three tasks
+    /// are already going.
     func showCommandBar() {
-        if sessionState.isBusy || isAwaitingApproval || isDemonstrating {
-            checklistPanelController?.showChecklistPanel(makeKey: false)
-            return
-        }
+        let frontmostApplication = NSWorkspace.shared.frontmostApplication
+        let frontmostProcessIdentifier = frontmostApplication?.bundleIdentifier == Bundle.main.bundleIdentifier
+            ? nil : frontmostApplication?.processIdentifier
+        guard let sessionForCommand = sessionForNewTask(targetProcessIdentifier: frontmostProcessIdentifier) else { return }
+        focus(sessionForCommand)
+        assignTaskColor(to: sessionForCommand)
         captureFrontmostApplicationAsTarget()
         applicationFrontmostWhenCommandBarWasSummoned = NSWorkspace.shared.frontmostApplication
         summonOriginOfNextCommandInTopLeftGlobalPoints = ScreenGeometry.mouseLocationInTopLeftGlobalPoints
@@ -418,8 +474,9 @@ final class TaskSessionController: ObservableObject {
     /// The current session's style, for its own panels.
     var taskStyleConfiguration: CursorStyleConfiguration { styleConfiguration(for: currentSession) }
 
-    /// A color no other task that is still going uses, so the user can tell running tasks apart.
-    private func assignTaskColor(to session: TaskSession) {
+    /// A color no other task that is still going uses, so the user can tell running tasks apart. Assigned when the
+    /// command bar opens for the task, so the bar is already in the color the task will run in.
+    func assignTaskColor(to session: TaskSession) {
         let colorHexesInUse = sessions.filter { $0 !== session && $0.sessionState != .idle }.compactMap(\.taskColorHex)
         session.taskColorHex = TaskColorPalette.colorHex(forNewTaskWithOwnerTaskColorHex: cursorStyleConfiguration.taskColorHex,
                                                          colorHexesInUse: colorHexesInUse)
@@ -548,6 +605,11 @@ extension TaskSessionController {
         set { currentSession.frontmostApplicationProcessIdentifierWhenCommandWasSubmitted = newValue }
     }
     var actionBackend: ActionBackend? { currentSession.actionBackend }
+    var mostRecentlyStartedRunTask: Task<Void, Never>? {
+        get { currentSession.mostRecentlyStartedRunTask }
+        set { currentSession.mostRecentlyStartedRunTask = newValue }
+    }
+    var directRouteSessionState: DirectRouteSessionState { currentSession.directRouteSessionState }
     var cursorController: CursorController { currentSession.cursorController }
     var visibilityMonitor: TargetWindowVisibilityMonitor { currentSession.visibilityMonitor }
     var targetWindowObserver: TargetWindowObserver { currentSession.targetWindowObserver }

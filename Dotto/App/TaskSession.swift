@@ -77,8 +77,17 @@ final class TaskSession: ObservableObject {
     var frontmostApplicationProcessIdentifierWhenCommandWasSubmitted: pid_t?
     /// The task's planner, kept while it waits for the user's reply so the conversation can go on.
     var currentChecklistPlanner: ChecklistPlanner?
+    /// This task wants the menu bar icon pulsing (a question of its is waiting); the icon pulses while any task does.
+    var wantsMenuBarIconPulse = false
+    /// The view of the coordinator this task's own panels use, made once the coordinator wires the session.
+    var scope: TaskSessionScope?
     /// The color this task's cursor, pill and checklist accents are drawn in (`TaskColorPalette`); nil until it starts.
     var taskColorHex: String?
+    /// Survives resetPerTaskResources: a stopped run may still be unwinding (finishTask, a slow AX call) after the
+    /// user dismisses it, and this session's next task must not take over its cursor until it has.
+    var mostRecentlyStartedRunTask: Task<Void, Never>?
+    /// What this task's direct-route views show: its planner context, live count, run report and any undo.
+    let directRouteSessionState = DirectRouteSessionState()
     /// This task's own backend. A stopped task that is still unwinding keeps using the one it started with.
     var actionBackend: ActionBackend?
 

@@ -26,17 +26,8 @@ struct MenuBarPanelView: View {
 
                 newTaskButton
 
-                if taskSessionController.sessionState.isBusy {
-                    Button("Stop Dotto") { taskSessionController.stopTask() }
-                        .dsDestructiveButtonStyle()
-                }
-
-                if taskSessionController.sessionState.currentChecklist != nil || taskSessionController.sessionState.isBusy {
-                    Button("Show checklist") {
-                        NotificationCenter.default.post(name: .dismissMenuBarPanel, object: nil)
-                        taskSessionController.showChecklist()
-                    }
-                    .dsSecondaryButtonStyle()
+                if !taskSessionController.sessionsWithTasks.isEmpty {
+                    tasksSection
                 }
 
                 UndoLastTaskRow(taskSessionController: taskSessionController,
@@ -103,7 +94,7 @@ struct MenuBarPanelView: View {
 
             Spacer()
 
-            Text(taskSessionController.statusLine)
+            Text(headerStatusLine)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(DesignSystem.Colors.textTertiary)
                 .lineLimit(1)
@@ -129,7 +120,32 @@ struct MenuBarPanelView: View {
             || !taskSessionController.permissionStatus.allRequiredPermissionsGranted {
             return DesignSystem.Colors.warning
         }
-        return taskSessionController.sessionState.isBusy ? DesignSystem.Colors.accentText : DesignSystem.Colors.success
+        return taskSessionController.anySessionIsBusy ? DesignSystem.Colors.accentText : DesignSystem.Colors.success
+    }
+
+    /// One task's own status line; with several, how many are going (each row has its own).
+    private var headerStatusLine: String {
+        let busyTaskCount = taskSessionController.sessionsWithTasks.filter { $0.sessionState.isBusy }.count
+        if busyTaskCount > 1 { return "\(busyTaskCount) tasks running" }
+        return taskSessionController.sessionsWithTasks.first(where: { $0.sessionState.isBusy })?.statusLine
+            ?? taskSessionController.statusLine
+    }
+
+    // MARK: - Tasks
+
+    private var tasksSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            MenuBarSectionLabel(title: "Tasks")
+            ForEach(taskSessionController.sessionsWithTasks, id: \.sessionIdentifier) { sessionWithTask in
+                if let sessionScope = sessionWithTask.scope {
+                    MenuBarTaskRow(sessionScope: sessionScope)
+                }
+            }
+            if taskSessionController.sessionsWithTasks.filter({ $0.sessionState.isBusy }).count > 1 {
+                Button("Stop all tasks") { taskSessionController.stopAllTasks() }
+                    .dsDestructiveButtonStyle()
+            }
+        }
     }
 
     // MARK: - Permissions
@@ -215,7 +231,7 @@ struct MenuBarPanelView: View {
             }
         }
         .dsPrimaryButtonStyle()
-        .disabled(taskSessionController.sessionState.isBusy)
+        .disabled(!taskSessionController.anotherTaskCanStart)
     }
 
     private var routinesSection: some View {

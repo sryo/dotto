@@ -168,12 +168,13 @@ extension TaskSessionController {
             runControl: runControl,
             focusPolicy: currentTaskFocusPolicy)
         let previousRunTask = mostRecentlyStartedRunTask
-        let undoTaskInProgress = directRouteSessionState.currentUndoTask
+        // Any task's undo: files it is putting back could be in this task's scope too.
+        let undoTasksInProgress = sessions.compactMap { $0.directRouteSessionState.currentUndoTask }
         let session = currentSession
         let executionTask = Task { [weak self] in
             await previousRunTask?.value
             // Files an undo is still putting back must not be moved again underneath it.
-            await undoTaskInProgress?.value
+            for undoTaskInProgress in undoTasksInProgress { await undoTaskInProgress.value }
             if session.currentAbortSignal === abortSignal, !abortSignal.isAborted, runSummonOrigin != nil {
                 // The cursor stays parked at the summon point for the whole run: no window, no flight.
                 session.cursorController.beginRun(ownedByRunWith: abortSignal, startingAtSummonOriginInTopLeftGlobalPoints: runSummonOrigin)
@@ -251,24 +252,28 @@ extension TaskSessionController {
     }
 
 
-    /// Reads the newest undoable journal for the menu bar's "Undo last task" row, a partly undone one included.
+    /// Reads the newest undoable journal for the menu bar's "Undo last task" row, a partly undone one included. Every
+    /// session gets the same answer, since the row shows whichever session the menu bar is on.
     func refreshMostRecentUndoableJournal() {
+        let mostRecentUndoableJournal = readMostRecentUndoableJournal()
+        for session in sessions { session.directRouteSessionState.mostRecentUndoableJournal = mostRecentUndoableJournal }
+    }
+
+    private func readMostRecentUndoableJournal() -> UndoableJournalSummary? {
         guard let journalStore = directRouteExecutionDependencies?.journalStore,
               let journalIdentifier = journalStore.mostRecentUndoableJournalIdentifier(),
               let loadedJournal = try? journalStore.loadJournal(journalIdentifier),
-              loadedJournal.isUndoable else {
-            directRouteSessionState.mostRecentUndoableJournal = nil
-            return
+              loadedJournal.isUndoable else { return nil }
+        let journalIsStillRunningInThisProcess = loadedJournal.status == .running && sessions.contains { session in
+            session.sessionState.currentChecklist?.taskIdentifier == journalIdentifier && session.sessionState.isBusy
         }
-        let journalIsStillRunningInThisSession = loadedJournal.status == .running
-            && sessionState.currentChecklist?.taskIdentifier == journalIdentifier && sessionState.isBusy
-        directRouteSessionState.mostRecentUndoableJournal = UndoableJournalSummary(
+        return UndoableJournalSummary(
             journalIdentifier: journalIdentifier,
             taskTitle: loadedJournal.header.taskTitle,
             changeCount: loadedJournal.entriesNotYetReverted.count,
             finishedAt: loadedJournal.entries.last?.performedAt ?? loadedJournal.header.startedAt,
             wasInterrupted: loadedJournal.status == .interrupted
-                || (loadedJournal.status == .running && !journalIsStillRunningInThisSession),
+                || (loadedJournal.status == .running && !journalIsStillRunningInThisProcess),
             wasPartiallyUndone: loadedJournal.status == .partiallyUndone)
     }
 

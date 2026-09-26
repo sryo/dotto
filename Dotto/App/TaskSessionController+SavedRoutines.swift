@@ -123,7 +123,6 @@ extension TaskSessionController {
 
     private func prepareRoutineChecklist(routine: Routine, parameterSets: [[ChecklistItemParameter]]) -> String? {
         guard !parameterSets.isEmpty else { return "There are no items to run. Add one line per item." }
-        guard !sessionState.isBusy, !isDemonstrating else { return "Finish or stop the current task first." }
         guard hasAnthropicAPIKey else {
             showAnthropicAPIKeySetup()
             return TaskUserFacingMessages.missingAnthropicAPIKeyMessage
@@ -138,9 +137,11 @@ extension TaskSessionController {
             return "Open \(routine.targetApplicationName) first, then try again."
         }
 
-        if isAwaitingApproval {
-            cancelChecklist()
+        // The routine's app may already have a task (its checklist opens), or three tasks may be going.
+        guard let sessionForRoutine = sessionForNewTask(targetProcessIdentifier: routineTargetRunningApplication.processIdentifier) else {
+            return "Finish or stop the task already working in \(routine.targetApplicationName), or one of the others, first."
         }
+        focus(sessionForRoutine)
         resetPerTaskResources()
         let routineTargetApplication = TargetApplicationReference(
             processIdentifier: routineTargetRunningApplication.processIdentifier,

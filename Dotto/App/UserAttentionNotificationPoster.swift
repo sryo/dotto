@@ -54,9 +54,10 @@ final class UserAttentionNotificationPoster: NSObject, UNUserNotificationCenterD
         }
     }
 
-    /// Removes delivered notifications for requests answered elsewhere, keeping the one still pending (if any).
-    func withdrawAll(exceptRequestIdentifier keptRequestIdentifier: String?) {
-        let withdrawnRequestIdentifiers = postedRequestIdentifiers.filter { $0 != keptRequestIdentifier }
+    /// Removes delivered notifications for requests answered elsewhere, keeping the ones still pending (one per task
+    /// at most).
+    func withdrawAll(exceptRequestIdentifiers keptRequestIdentifiers: Set<String>) {
+        let withdrawnRequestIdentifiers = postedRequestIdentifiers.subtracting(keptRequestIdentifiers)
         guard !withdrawnRequestIdentifiers.isEmpty else { return }
         postedRequestIdentifiers.subtract(withdrawnRequestIdentifiers)
         notificationCenter.removeDeliveredNotifications(withIdentifiers: Array(withdrawnRequestIdentifiers))

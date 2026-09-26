@@ -51,7 +51,7 @@ struct CommandPillView: View {
     }
 
     private var taskColor: Color {
-        taskSessionController.cursorStyleConfiguration.taskAccentColor
+        taskSessionController.taskStyleConfiguration.taskAccentColor
     }
 
     var body: some View {
