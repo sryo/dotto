@@ -157,7 +157,9 @@ extension TaskSessionController {
             checklistPanelController?.showChecklistPanel(makeKey: false)
             return
         }
-        let runScopedDelegate = TaskRunDelegateBridge(taskSessionController: self, runAbortSignal: abortSignal)
+        let runScopedDelegate = TaskRunDelegateBridge(taskSessionController: self, runAbortSignal: abortSignal,
+                                                      foregroundAssistTurnQueue: foregroundAssistTurnQueue,
+                                                      foregroundAssistTurnOwnerIdentifier: currentSession.sessionIdentifier)
         let directRouteExecutor = DirectRouteExecutor(
             dependencies: directRouteExecutionDependencies,
             confirmationRequester: runScopedDelegate,

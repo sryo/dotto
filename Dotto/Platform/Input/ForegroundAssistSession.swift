@@ -31,10 +31,10 @@ import ApplicationServices
         guard !isRunning else { throw ActionBackendError.foregroundAssistFailed("another bring-forward step is still running") }
         isRunning = true
         // Reported around the restore too: bringing the user's app back re-orders and re-lays out the target's windows.
-        automatedActivityRelay.report(.foregroundAssistStarted)
+        automatedActivityRelay.report(.foregroundAssistStarted, targetProcessIdentifier: nil)
         defer {
             isRunning = false
-            automatedActivityRelay.report(.foregroundAssistFinished)
+            automatedActivityRelay.report(.foregroundAssistFinished, targetProcessIdentifier: nil)
         }
 
         let savedUserPosition = saveUserPosition(excludingTarget: targetApplication)

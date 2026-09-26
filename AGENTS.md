@@ -105,7 +105,9 @@ What else the app does:
   and under a rest-of-task grant too, the app comes forward only once the user has paused
   (`Core/Execution/ForegroundAssistReadinessPolicy`: no real click, scroll or key for 1.5 s and no password field
   active in another app, read by `Platform/Input/ForegroundAssistReadinessProbe`), after a 1 s "Bringing <App>
-  forward…" countdown on the pill with Cancel. After 20 s of waiting, Dotto asks once more.
+  forward…" countdown on the pill with Cancel. After 20 s of waiting, Dotto asks once more. Only one task's app may
+  come forward at a time: each assist takes its turn in `Core/Execution/ForegroundAssistTurnQueue` (first come, first
+  served, 0.5 s between turns) before the readiness wait and gives it back once the user's app is restored.
   The optional **Avoid foreground assists** setting disables foreground assists for a task. Steps that need
   the target in front stay undone and mark their items needs-user; the setting is fixed for the task.
 - **Dotto's cursor** (`Core/Cursor`, drawn by `UI/Cursor`). One seam, two surfaces: the pure
@@ -165,7 +167,8 @@ What else the app does:
   run (`UserTakeoverDetector`); input in other apps and pointer travel never do. Only the window the run pinned at its
   start counts (`TargetWindowObserver`), not windows Dotto's steps open (Get Info, inspectors, sheets), and only when
   its frame really changed and no Dotto action or bring-forward assist is under way or ended within 1.5 s
-  (`AutomatedTargetActivityRelay`, fed by the backend and `ForegroundAssistSession`). A close that follows Dotto's own
+  (`AutomatedTargetActivityRelay`, fed by the backend and `ForegroundAssistSession`; an action counts only for the task
+  whose app it went to, an assist for every task). A close that follows Dotto's own
   ⌘W, ⌘M, Esc, Return or click re-pins the app's front window instead of pausing. A click on a Dotto panel is
   recognized by AppKit having delivered it (`UserInputObserver`'s local monitor) or the pixel hit test, and clicks
   within 0.75 s of Resume or a pill answer never count. Resume re-baselines the pinned window's frame. The user can pause, resume, skip or
@@ -503,7 +506,7 @@ Every one of these has tests in `DottoCoreTests/`. If a change weakens one of th
 | `Dotto/Core/Checklist/` | `Checklist` and `ChecklistItem` models, `ChecklistPlanner` (one conversation per task, paused on `ask_user` and continued with the reply), `ChecklistPlanningProgress` (what the planner is doing, for the status line and the cursor), `PlannerConversationModels` (the question and its choices, the thread's transcript, markdown to plain text) |
 | `Dotto/Core/Agent/` | Tool schemas and the decoder, `PromptLibrary`, `ChecklistItemAgentLoop`, `ChecklistItemExecutionModels` (an item's execution context and result) |
 | `Dotto/Core/Claude/` | Messages API models, the SSE accumulator, the tool-conversation runner, `ClaudeTransport` and its metered wrapper, model ids, `ClaudeMessagesRequestGuard` (model allowlist, `max_tokens` cap, custom tools only), `AnthropicMessagesEndpoint` (URL and headers), `AnthropicAPIKeyFormat` (validation on save and the masked form), `AnthropicAPIKeyRenameMigration` (whether to move a key saved under the pre-rename Keychain service) |
-| `Dotto/Core/Execution/` | `InputObservationLeases` (which tasks and recordings need the user's input observed; the one tap runs while any lease is held), `TaskExecutor`, `DirectRouteExecutor` (approved direct plans: re-validation, confirmations, file operations, one script or shortcut), the `ActionBackend` protocol, the bring-forward assist decision and readiness policy, abort, run control, takeover, retry, budget, metrics |
+| `Dotto/Core/Execution/` | `ForegroundAssistTurnQueue` (tasks take turns bringing their app forward), `InputObservationLeases` (which tasks and recordings need the user's input observed; the one tap runs while any lease is held), `TaskExecutor`, `DirectRouteExecutor` (approved direct plans: re-validation, confirmations, file operations, one script or shortcut), the `ActionBackend` protocol, the bring-forward assist decision and readiness policy, abort, run control, takeover, retry, budget, metrics |
 | `Dotto/Core/InputDelivery/` | `AccessibilityModePolicy` and `AccessibilityModeHolds` (which modes an app kind gets, and per-app hold counts), `InputTierPlanner` (tiers and delivery confirmation) with `MenuShortcutMatcher`, `TextReplacementPlanner` (`replace_text`'s UTF-16 edits, expected value and routes), pointer recipes for the assist, `FocusedKeyboardInputGuard` for open panels, change fingerprints, app kind classification |
 | `Dotto/Core/Cursor/` | The cursor seam: presentation state and mapper (planning, review and run states), `CursorPillText` (the pill's one line, with the item position), attention requests and preferences, which answers still apply and the 0.5 s click guard (`UserDecisionAnswerPolicy`), surface placement with hysteresis, `AttachedPanelPlacement` (the checklist popover beside the cursor or the live view: flips, clamping, tail), `PillPlacement` (the cursor's pill, the command pill and the live view kept inside the visible frame of their point's screen, flipped left of or above the point), `CommandPillHandoff` (the status pill taking the submitted command pill's capsule's place: shared tip-facing edge and vertical center, same flips), flight path, style defaults |
 | `Dotto/Core/Uploads/` | `UploadFileAllowlist` and `ProtectedPathPolicy` (the protected-path deny list, shared with file operations) |

@@ -3,6 +3,16 @@ import AppKit
 /// Pause, resume and skip from the checklist panel, and the takeover pause when the user clicks, scrolls or types in
 /// the target app or moves or closes its window.
 extension TaskSessionController {
+    /// Only the session whose app the action went to hears about it; activity that names no app (a bring-forward
+    /// assist and its restore) reaches every session.
+    func routeAutomatedTargetActivity(_ automatedActivity: AutomatedTargetActivity, atTimestampSeconds timestampSeconds: TimeInterval,
+                                      targetProcessIdentifier: pid_t?) {
+        for session in [currentSession] where targetProcessIdentifier == nil
+            || session.targetApplication?.processIdentifier == targetProcessIdentifier {
+            session.userTakeoverDetector.noteAutomatedActivity(automatedActivity, atTimestampSeconds: timestampSeconds)
+        }
+    }
+
     func pauseTask(reason: TaskPauseReason = .requestedByUser) {
         guard case .executing = sessionState, let currentRunControl else { return }
         currentRunControl.requestPause(reason: reason)

@@ -7,10 +7,17 @@ final class TaskRunDelegateBridge: UserConfirmationRequesting, TaskExecutionObse
                                    ForegroundAssistReadinessGating {
     private weak var taskSessionController: TaskSessionController?
     private let runAbortSignal: TaskAbortSignal
+    /// Shared by every task: whose app may come forward next.
+    private let foregroundAssistTurnQueue: ForegroundAssistTurnQueue
+    /// This run's place in that queue.
+    private let foregroundAssistTurnOwnerIdentifier: String
 
-    init(taskSessionController: TaskSessionController, runAbortSignal: TaskAbortSignal) {
+    init(taskSessionController: TaskSessionController, runAbortSignal: TaskAbortSignal,
+         foregroundAssistTurnQueue: ForegroundAssistTurnQueue, foregroundAssistTurnOwnerIdentifier: String) {
         self.taskSessionController = taskSessionController
         self.runAbortSignal = runAbortSignal
+        self.foregroundAssistTurnQueue = foregroundAssistTurnQueue
+        self.foregroundAssistTurnOwnerIdentifier = foregroundAssistTurnOwnerIdentifier
     }
 
     private var sessionControllerOfCurrentRun: TaskSessionController? {
@@ -77,5 +84,17 @@ final class TaskRunDelegateBridge: UserConfirmationRequesting, TaskExecutionObse
 
     func foregroundAssistPendingEnded() {
         sessionControllerOfCurrentRun?.foregroundAssistPendingEnded()
+    }
+
+    /// A stale run never gets a turn.
+    func waitForForegroundAssistTurn(abortSignal: TaskAbortSignal) async -> Bool {
+        guard sessionControllerOfCurrentRun != nil else { return false }
+        return await foregroundAssistTurnQueue.waitForTurn(ownerIdentifier: foregroundAssistTurnOwnerIdentifier, abortSignal: abortSignal)
+    }
+
+    /// Always given back, also by a run that went stale while it held the turn: otherwise no other task could ever
+    /// bring its app forward again.
+    func foregroundAssistTurnEnded() {
+        foregroundAssistTurnQueue.endTurn(ownerIdentifier: foregroundAssistTurnOwnerIdentifier)
     }
 }

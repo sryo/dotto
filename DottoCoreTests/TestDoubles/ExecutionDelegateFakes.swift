@@ -71,4 +71,17 @@ import CoreGraphics
         return countdownResults.isEmpty ? true : countdownResults.removeFirst()
     }
     func foregroundAssistPendingEnded() { recordedCalls.append("ended") }
+
+    /// Kept apart from `recordedCalls`: "turn" when the turn was asked for, "turnEnded" when it was given back.
+    var turnCalls: [String] = []
+    /// False plays a task stopped while it waited in the queue.
+    var grantsTurn = true
+    /// How many readiness-input reads had happened when the turn was granted.
+    var inputReadsBeforeTurn: Int?
+    func waitForForegroundAssistTurn(abortSignal: TaskAbortSignal) async -> Bool {
+        turnCalls.append("turn")
+        inputReadsBeforeTurn = recordedCalls.filter { $0 == "inputs" }.count
+        return grantsTurn
+    }
+    func foregroundAssistTurnEnded() { turnCalls.append("turnEnded") }
 }

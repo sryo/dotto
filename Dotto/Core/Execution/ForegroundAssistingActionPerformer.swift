@@ -40,16 +40,18 @@ enum ForegroundAssistingActionPerformer {
         }
         // Uploads were confirmed under `.uploadingFiles`, whose card already says the app comes forward.
         if action.requiresForegroundAssist {
-            switch try await waitUntilUserHasPaused(riskCategory: .uploadingFiles, confirmationRequester: confirmationRequester,
-                                                    auditLogWriter: auditLogWriter, context: context,
-                                                    riskCategoriesAllowedForRestOfTask: &riskCategoriesAllowedForRestOfTask,
-                                                    abortSignal: abortSignal, readinessGate: readinessGate) {
-            case .proceed: break
-            case .declined: return .userDeclinedForegroundAssist
-            case .stopped: return .userStoppedTask
+            return try await duringForegroundAssistTurn(readinessGate: readinessGate, abortSignal: abortSignal) {
+                switch try await waitUntilUserHasPaused(riskCategory: .uploadingFiles, confirmationRequester: confirmationRequester,
+                                                        auditLogWriter: auditLogWriter, context: context,
+                                                        riskCategoriesAllowedForRestOfTask: &riskCategoriesAllowedForRestOfTask,
+                                                        abortSignal: abortSignal, readinessGate: readinessGate) {
+                case .proceed: break
+                case .declined: return .userDeclinedForegroundAssist
+                case .stopped: return .userStoppedTask
+                }
+                return .performed(try await performWithAudit(action, actionBackend: actionBackend, auditLogWriter: auditLogWriter,
+                                                             context: context, abortSignal: abortSignal))
             }
-            return .performed(try await performWithAudit(action, actionBackend: actionBackend, auditLogWriter: auditLogWriter,
-                                                         context: context, abortSignal: abortSignal))
         }
         let backgroundFailureDetail: String
         do {
@@ -91,16 +93,36 @@ enum ForegroundAssistingActionPerformer {
             }
         }
         try abortSignal.throwIfAborted()
-        switch try await waitUntilUserHasPaused(riskCategory: .bringingAppForward, confirmationRequester: confirmationRequester,
-                                                auditLogWriter: auditLogWriter, context: context,
-                                                riskCategoriesAllowedForRestOfTask: &riskCategoriesAllowedForRestOfTask,
-                                                abortSignal: abortSignal, readinessGate: readinessGate) {
-        case .proceed: break
-        case .declined: return .userDeclinedForegroundAssist
-        case .stopped: return .userStoppedTask
+        return try await duringForegroundAssistTurn(readinessGate: readinessGate, abortSignal: abortSignal) {
+            switch try await waitUntilUserHasPaused(riskCategory: .bringingAppForward, confirmationRequester: confirmationRequester,
+                                                    auditLogWriter: auditLogWriter, context: context,
+                                                    riskCategoriesAllowedForRestOfTask: &riskCategoriesAllowedForRestOfTask,
+                                                    abortSignal: abortSignal, readinessGate: readinessGate) {
+            case .proceed: break
+            case .declined: return .userDeclinedForegroundAssist
+            case .stopped: return .userStoppedTask
+            }
+            return .performed(try await performWithAudit(action, actionBackend: actionBackend, auditLogWriter: auditLogWriter,
+                                                         context: context, abortSignal: abortSignal))
         }
-        return .performed(try await performWithAudit(action, actionBackend: actionBackend, auditLogWriter: auditLogWriter,
-                                                     context: context, abortSignal: abortSignal))
+    }
+
+    /// The readiness wait, the countdown and the assist itself happen inside one turn, so the readiness Core checked is
+    /// still true when the app comes forward and no other task's assist can be under way. Without a gate (tests,
+    /// callers that never bring an app forward) there is no queue to wait in.
+    private static func duringForegroundAssistTurn(
+        readinessGate: ForegroundAssistReadinessGating?, abortSignal: TaskAbortSignal,
+        _ body: () async throws -> ForegroundAssistingPerformResult) async throws -> ForegroundAssistingPerformResult {
+        guard let readinessGate else { return try await body() }
+        guard await readinessGate.waitForForegroundAssistTurn(abortSignal: abortSignal) else { return .userStoppedTask }
+        do {
+            let performResult = try await body()
+            await readinessGate.foregroundAssistTurnEnded()
+            return performResult
+        } catch {
+            await readinessGate.foregroundAssistTurnEnded()
+            throw error
+        }
     }
 
     private enum ReadinessWaitOutcome { case proceed, declined, stopped }

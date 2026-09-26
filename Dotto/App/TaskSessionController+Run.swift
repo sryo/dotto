@@ -37,7 +37,9 @@ extension TaskSessionController {
 
         // The executor only ever talks to this run's proxy, so a stopped run that is still unwinding can't
         // touch the UI or confirmation state of a newer run.
-        let runScopedDelegate = TaskRunDelegateBridge(taskSessionController: self, runAbortSignal: abortSignal)
+        let runScopedDelegate = TaskRunDelegateBridge(taskSessionController: self, runAbortSignal: abortSignal,
+                                                      foregroundAssistTurnQueue: foregroundAssistTurnQueue,
+                                                      foregroundAssistTurnOwnerIdentifier: currentSession.sessionIdentifier)
         var executionOptions = TaskExecutionOptions()
         executionOptions.runControl = runControl
         executionOptions.focusPolicy = currentTaskFocusPolicy

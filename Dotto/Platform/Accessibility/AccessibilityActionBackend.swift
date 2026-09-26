@@ -279,13 +279,14 @@ actor AccessibilityActionBackend: ActionBackend {
     /// The start is reported before any input is posted, so a window the action closes or resizes is known to be
     /// Dotto's by the time the app's notification arrives.
     private func performActionReportingAutomatedActivity(_ action: AgentAction, context: ActionRunContext) async throws -> ActionOutcome {
-        await automatedActivityRelay.report(.actionStarted(action))
+        let targetProcessIdentifier = context.targetApplication.processIdentifier
+        await automatedActivityRelay.report(.actionStarted(action), targetProcessIdentifier: targetProcessIdentifier)
         do {
             let actionOutcome = try await performAction(action, context: context)
-            await automatedActivityRelay.report(.actionFinished)
+            await automatedActivityRelay.report(.actionFinished, targetProcessIdentifier: targetProcessIdentifier)
             return actionOutcome
         } catch {
-            await automatedActivityRelay.report(.actionFinished)
+            await automatedActivityRelay.report(.actionFinished, targetProcessIdentifier: targetProcessIdentifier)
             throw error
         }
     }

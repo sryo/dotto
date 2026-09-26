@@ -66,4 +66,9 @@ struct ForegroundAssistReadinessPolicy: Equatable, Sendable {
     func runForegroundAssistCountdown(countdownSeconds: Double, abortSignal: TaskAbortSignal) async -> Bool
     /// The wait or countdown is over: the assist starts next, the user is asked again, or it was called off.
     func foregroundAssistPendingEnded()
+    /// Waits for this task's turn to bring its app forward (`ForegroundAssistTurnQueue`). False when the task was
+    /// stopped while waiting.
+    func waitForForegroundAssistTurn(abortSignal: TaskAbortSignal) async -> Bool
+    /// The assist is over (or never happened): the next task may take its turn.
+    func foregroundAssistTurnEnded()
 }

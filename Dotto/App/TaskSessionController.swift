@@ -104,6 +104,8 @@ final class TaskSessionController: ObservableObject {
     let directRouteExecutionDependencies: DirectRouteExecutionDependencies?
     let directRouteSessionState = DirectRouteSessionState()
 
+    /// Only one task's app may be brought forward at a time; every task's run takes its turn here.
+    let foregroundAssistTurnQueue = ForegroundAssistTurnQueue()
     /// The one task Dotto runs today. Its state is forwarded below under the names the flows and views already use.
     let currentSession = TaskSession()
     private var currentSessionChangeSubscription: AnyCancellable?
@@ -162,8 +164,9 @@ final class TaskSessionController: ObservableObject {
         targetWindowObserver.onTargetWindowEvent = { [weak self] targetWindowEvent in
             self?.routeTargetWindowEvent(targetWindowEvent)
         }
-        automatedTargetActivityRelay.onAutomatedTargetActivity = { [weak self] automatedActivity, timestampSeconds in
-            self?.userTakeoverDetector.noteAutomatedActivity(automatedActivity, atTimestampSeconds: timestampSeconds)
+        automatedTargetActivityRelay.onAutomatedTargetActivity = { [weak self] automatedActivity, timestampSeconds, targetProcessIdentifier in
+            self?.routeAutomatedTargetActivity(automatedActivity, atTimestampSeconds: timestampSeconds,
+                                               targetProcessIdentifier: targetProcessIdentifier)
         }
         visibilityMonitor.onVisibilityChanged = { [weak self] targetWindowVisibility in
             self?.cursorController.updateTargetWindowVisibility(targetWindowVisibility)

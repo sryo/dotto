@@ -199,6 +199,34 @@ let foregroundAssistingActionPerformerTestSuite = CoreTestSuite(name: "Foregroun
         try expectEqual(await interruptedGate.recordedCalls, ["inputs", "countdown", "inputs", "inputs", "countdown", "inputs", "ended"])
         try expectEqual(interruptedFixture.actionBackend.actionsPerformedWithForegroundAssist, [clickOnRename])
     },
+    CoreTestCase(name: "the turn is taken before the readiness wait and given back after the assist, even when declined") {
+        let fixture = try PerformerFixture()
+        fixture.actionBackend.errorForNextPerform = undeliveredClick
+        let readinessGate = ScriptedForegroundAssistReadinessGate(scriptedInputs: [ScriptedForegroundAssistReadinessGate.idleInputs])
+        var grants: Set<SafetyRiskCategory> = [.bringingAppForward]
+        _ = try await fixture.perform(clickOnRename, context: quickReadinessContext, grants: &grants, readinessGate: readinessGate)
+        try expectEqual(await readinessGate.turnCalls, ["turn", "turnEnded"])
+        try expectEqual(await readinessGate.inputReadsBeforeTurn, 0, "readiness is only read once the turn is held")
+        try expectEqual(fixture.actionBackend.actionsPerformedWithForegroundAssist, [clickOnRename])
+
+        let decliningFixture = try PerformerFixture()
+        decliningFixture.actionBackend.errorForNextPerform = undeliveredClick
+        let cancellingGate = ScriptedForegroundAssistReadinessGate(scriptedInputs: [ScriptedForegroundAssistReadinessGate.idleInputs],
+                                                                   countdownResults: [false])
+        _ = try await decliningFixture.perform(clickOnRename, context: quickReadinessContext, grants: &grants, readinessGate: cancellingGate)
+        try expectEqual(await cancellingGate.turnCalls, ["turn", "turnEnded"])
+    },
+    CoreTestCase(name: "a task stopped while waiting for its turn never brings its app forward") {
+        let fixture = try PerformerFixture()
+        fixture.actionBackend.errorForNextPerform = undeliveredClick
+        let readinessGate = ScriptedForegroundAssistReadinessGate(scriptedInputs: [ScriptedForegroundAssistReadinessGate.idleInputs])
+        await MainActor.run { readinessGate.grantsTurn = false }
+        var grants: Set<SafetyRiskCategory> = [.bringingAppForward]
+        let result = try await fixture.perform(clickOnRename, context: quickReadinessContext, grants: &grants, readinessGate: readinessGate)
+        try expectEqual(result, .userStoppedTask)
+        try expectEqual(fixture.actionBackend.actionsPerformedWithForegroundAssist, [])
+        try expectEqual(await readinessGate.recordedCalls, [])
+    },
     CoreTestCase(name: "uploads wait for the user to pause too") {
         let fixture = try PerformerFixture()
         let uploadAction = AgentAction.uploadFiles(elementIdentifier: "e2", filePaths: ["/Users/me/a.pdf"])
