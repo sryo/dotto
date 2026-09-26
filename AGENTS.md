@@ -491,7 +491,7 @@ Every one of these has tests in `DottoCoreTests/`. If a change weakens one of th
 | Path | What lives there |
 |---|---|
 | `Dotto/App/DottoApp.swift` | `DottoApp` and `DottoAppDelegate`, the composition root. Builds the transport, backends, monitors, store and panels |
-| `Dotto/App/TaskSessionController.swift` | The coordinator: its published state and the state machine events it applies |
+| `Dotto/App/TaskSessionController.swift`, `TaskSession.swift` | The coordinator: its published app-wide state and the state machine events it applies. Everything that belongs to one task (state, target app, audit log, Stop signal, budget, planner conversation, run control, pending questions, takeover detector) lives in its `TaskSession`; the controller holds one and forwards its fields under their old names |
 | `Dotto/App/TaskSessionController+Planning.swift`, `+Run`, `+Decisions`, `+Pause`, `+ExecutionObserving` | Command and planning; starting and finishing a run; safety confirmations and failure decisions (each a `PendingUserAnswer`); pause, resume and takeover; executor callbacks that drive the cursor and the takeover detector |
 | `Dotto/App/TaskSessionController+Teaching.swift`, `+SavedRoutines`, `+Attention`, `+ForegroundAssist`, `+SummonHotkey`, `+SummonGesture`, `+AnthropicAPIKey` | Teach mode; saved routines and file pickers; chimes, notifications and the cursor's attention requests; the bring-forward countdown; the summon shortcut; circle-to-summon settings and opening the pill; saving, replacing and removing the API key, and opening the panel's key card when a command needs one |
 | `Dotto/App/SummonGestureController.swift` | Starts and stops the pointer observation per eligibility, feeds the recognizer, draws the ring, fires the pill |

@@ -29,16 +29,13 @@ struct TaskStartResources {
     var taskResourceBudget: TaskResourceBudget
 }
 
-/// Composition-level coordinator for one task at a time: owns the task session state, drives the planner and
+/// Composition-level coordinator for one task at a time: owns the task's `TaskSession`, drives the planner and
 /// executor, answers safety confirmations and keeps the command bar, checklist panel and acting cursor in sync.
 /// Split per flow into `+Planning`, `+Run`, `+Decisions`, `+Pause`, `+ExecutionObserving`, `+Teaching`,
 /// `+SavedRoutines`, `+Attention`, `+ForegroundAssist`, `+SummonHotkey`, `+SummonGesture`, `+AnthropicAPIKey` and `+DirectRoutes`. It deliberately conforms to none of the
 /// executor's protocols: only a run-scoped `TaskRunDelegateBridge` is ever handed to Core.
 @MainActor
 final class TaskSessionController: ObservableObject {
-    @Published private(set) var sessionState: TaskSessionState = .idle {
-        didSet { summonGestureController?.refreshObservation() }
-    }
     @Published private(set) var permissionStatus: SystemPermissionStatus
     @Published private(set) var summonHotkeyIsRegistered: Bool = false
     /// ⌃⌥Space unless the user recorded another shortcut in the menu bar panel.
@@ -60,32 +57,21 @@ final class TaskSessionController: ObservableObject {
 
     // The members below are internal rather than private only because the per-flow extensions live in their own
     // files. Views read them and never assign them.
-    @Published var currentRunMetrics: TaskRunMetrics?
-    /// A routine Dotto learned (or patched) from its own run. It replays for the rest of this task either way; it is
-    /// only written to the library once the user has reviewed its steps and chosen to save it.
-    @Published var learnedRoutineAwaitingReview: Routine?
-    @Published var statusLine: String = TaskUserFacingMessages.readyStatusLine
-    @Published var targetApplication: TargetApplicationReference?
     @Published var savedRoutines: [Routine] = []
     /// Routine files that weren't loaded (unsigned, edited outside Dotto, damaged, …), shown with the reason.
     @Published var skippedRoutineFiles: [SkippedRoutineFile] = []
-    @Published var attachedRoutine: Routine?
     @Published var recordedDemonstrationEventCount: Int = 0
     /// What the recorder saw but couldn't record (typing in a web page, pasting an image), shown on the teaching card.
     @Published var demonstrationRecordingNotes: [String] = []
-    /// A taught routine is only saved and attached once the user has reviewed its steps and the text it will type.
-    @Published var taughtRoutineAwaitingReview: Routine?
     /// Files and folders the user attached or dropped in the command bar; only these can be uploaded by the next task.
     @Published var attachedUploadGrants: [UploadFileGrant] = []
     @Published var cursorStyleConfiguration: CursorStyleConfiguration = .standard
     @Published var attentionPreferences: AttentionPreferences = .standard
     /// Background-first by default; the user can require a strict no-assist task before starting it.
     @Published var taskFocusPolicy: TaskFocusPolicy = .allowApprovedAssist
-    var currentTaskFocusPolicy: TaskFocusPolicy = .allowApprovedAssist
     @Published var liveViewCorner: ScreenCorner = .bottomRight
     /// The menu bar icon pulses while a decision waits for the user.
     @Published var isMenuBarIconPulsing = false
-    var currentAuditLogFileURL: URL?
     let claudeTransport: ClaudeTransport
     let anthropicAPIKeyStore: AnthropicAPIKeyStore
     let actionBackend: ActionBackend
@@ -97,19 +83,9 @@ final class TaskSessionController: ObservableObject {
     let routineLibraryStore: RoutineLibraryStore
     var checklistPanelController: ChecklistPanelController?
     var commandBarPanelController: CommandBarPanelController?
-    var currentAuditLogWriter: AuditLogWriter?
-    var currentAbortSignal: TaskAbortSignal?
-    /// Created with the task, before planning, and shared by planning, teaching and the run (invariant 9).
-    var currentTaskResourceBudget: TaskResourceBudget?
-    /// Separate from the task's abort signal: cancelling teaching must not poison the run that follows it.
-    var currentTeachingAbortSignal: TaskAbortSignal?
-    /// The allowlist the current or next run uploads from: the command's attachments, or a routine's picked folder.
-    var currentUploadFileAllowlist: UploadFileAllowlist = .empty
     let cursorController: CursorController
     let attentionNotificationPoster: UserAttentionNotificationPoster
     let previousApplicationTracker = PreviousApplicationTracker()
-    /// Set by the countdown's Cancel button; read by the countdown that is running.
-    var foregroundAssistCountdownWasCancelled = false
     let keyboardMonitor: GlobalKeyboardMonitor
     let pointerMovementObserver: PointerMovementObserver
     var summonGestureController: SummonGestureController?
@@ -119,31 +95,16 @@ final class TaskSessionController: ObservableObject {
     /// Where the user last summoned Dotto, in top-left global points: the point the circle gesture fired at, or the
     /// pointer when the shortcut opened the command bar. The next command's task starts its cursor there.
     var summonOriginOfNextCommandInTopLeftGlobalPoints: CGPoint?
-    /// The current task's summon point: its cursor plans there and the checklist hangs from it. nil for a task that
-    /// wasn't summoned (a saved routine run from the menu bar).
-    var currentTaskSummonOriginInTopLeftGlobalPoints: CGPoint?
-    var currentPlanningOrExecutionTask: Task<Void, Never>?
     /// Survives resetPerTaskResources: a stopped run may still be unwinding (finishTask, a slow AX call)
     /// after the user dismisses it, and the next run must not prepare the backend until it has.
     var mostRecentlyStartedRunTask: Task<Void, Never>?
-    let pendingSafetyConfirmation = PendingUserAnswer<SafetyConfirmationAnswer>()
-    let pendingItemFailureDecision = PendingUserAnswer<ChecklistItemFailureDecision>()
-    var currentRunControl: TaskRunControl?
-    var userTakeoverDetector = UserTakeoverDetector()
-    var lastSubmittedCommandText: String = ""
-    /// When and where the user submitted the current command, so a later planner question only takes the keyboard
-    /// if they are still waiting on Dotto (same app in front, no clicks or keys since).
-    var commandSubmittedAtSystemUptime: TimeInterval?
-    var frontmostApplicationProcessIdentifierWhenCommandWasSubmitted: pid_t?
-    /// What the planning thread shows: the command, Dotto's questions and the user's replies.
-    @Published var plannerConversationTranscript = PlannerConversationTranscript()
-    /// What the planner is doing while the thread waits on it; nil once it has answered.
-    @Published var currentPlanningProgress: ChecklistPlanningProgress?
-    /// The current task's planner, kept while it waits for the user's reply so the conversation can go on.
-    var currentChecklistPlanner: ChecklistPlanner?
     /// The file system, journal, script and shortcut runners direct routes use; nil turns direct routes off.
     let directRouteExecutionDependencies: DirectRouteExecutionDependencies?
     let directRouteSessionState = DirectRouteSessionState()
+
+    /// The one task Dotto runs today. Its state is forwarded below under the names the flows and views already use.
+    let currentSession = TaskSession()
+    private var currentSessionChangeSubscription: AnyCancellable?
 
     private var permissionPollingTimer: Timer?
 
@@ -165,6 +126,13 @@ final class TaskSessionController: ObservableObject {
         self.directRouteExecutionDependencies = dependencies.directRouteExecutionDependencies
         self.permissionStatus = SystemPermissions.readCurrentStatus()
         refreshAnthropicAPIKeyState()
+        // Views observe the controller; a change inside the session must redraw them as before.
+        currentSessionChangeSubscription = currentSession.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        currentSession.onSessionStateDidChange = { [weak self] in
+            self?.summonGestureController?.refreshObservation()
+        }
     }
 
     // MARK: - Lifecycle
@@ -347,7 +315,7 @@ final class TaskSessionController: ObservableObject {
             print("Dotto: ignored \(event) in state \(sessionState)")
             return false
         }
-        sessionState = nextState
+        currentSession.sessionState = nextState
         return true
     }
 
@@ -398,22 +366,8 @@ final class TaskSessionController: ObservableObject {
     }
 
     func resetPerTaskResources() {
-        currentPlanningOrExecutionTask = nil
-        currentAbortSignal = nil
-        currentAuditLogWriter = nil
-        currentTaskResourceBudget = nil
-        currentRunControl = nil
-        currentRunMetrics = nil
-        attachedRoutine = nil
-        learnedRoutineAwaitingReview = nil
-        currentUploadFileAllowlist = .empty
-        currentTaskFocusPolicy = taskFocusPolicy
-        currentTaskSummonOriginInTopLeftGlobalPoints = nil
-        currentChecklistPlanner = nil
-        currentPlanningProgress = nil
-        plannerConversationTranscript = PlannerConversationTranscript()
+        currentSession.resetPerTaskResources(taskFocusPolicyForNextTask: taskFocusPolicy)
         directRouteSessionState.clearTaskResult()
-        userTakeoverDetector.reset()
     }
 
     func captureFrontmostApplicationAsTarget() {
@@ -432,4 +386,110 @@ final class TaskSessionController: ObservableObject {
         let randomTaskIdentifierSuffix = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(6)).lowercased()
         return TaskIdentifierFactory.makeTaskIdentifier(now: Date(), randomSuffix: randomTaskIdentifierSuffix)
     }
+}
+
+// MARK: - The current session's state
+
+/// Forwarded to `currentSession` under the names the per-flow extensions and the views already use, so moving the state
+/// into `TaskSession` changes no behavior. Flows move to explicit sessions as Dotto learns to run several at once.
+extension TaskSessionController {
+    var sessionState: TaskSessionState { currentSession.sessionState }
+    var targetApplication: TargetApplicationReference? {
+        get { currentSession.targetApplication }
+        set { currentSession.targetApplication = newValue }
+    }
+    var statusLine: String {
+        get { currentSession.statusLine }
+        set { currentSession.statusLine = newValue }
+    }
+    var currentRunMetrics: TaskRunMetrics? {
+        get { currentSession.currentRunMetrics }
+        set { currentSession.currentRunMetrics = newValue }
+    }
+    var attachedRoutine: Routine? {
+        get { currentSession.attachedRoutine }
+        set { currentSession.attachedRoutine = newValue }
+    }
+    var learnedRoutineAwaitingReview: Routine? {
+        get { currentSession.learnedRoutineAwaitingReview }
+        set { currentSession.learnedRoutineAwaitingReview = newValue }
+    }
+    var taughtRoutineAwaitingReview: Routine? {
+        get { currentSession.taughtRoutineAwaitingReview }
+        set { currentSession.taughtRoutineAwaitingReview = newValue }
+    }
+    var currentAuditLogFileURL: URL? {
+        get { currentSession.currentAuditLogFileURL }
+        set { currentSession.currentAuditLogFileURL = newValue }
+    }
+    var plannerConversationTranscript: PlannerConversationTranscript {
+        get { currentSession.plannerConversationTranscript }
+        set { currentSession.plannerConversationTranscript = newValue }
+    }
+    var currentPlanningProgress: ChecklistPlanningProgress? {
+        get { currentSession.currentPlanningProgress }
+        set { currentSession.currentPlanningProgress = newValue }
+    }
+    var currentTaskFocusPolicy: TaskFocusPolicy {
+        get { currentSession.currentTaskFocusPolicy }
+        set { currentSession.currentTaskFocusPolicy = newValue }
+    }
+    var currentAuditLogWriter: AuditLogWriter? {
+        get { currentSession.currentAuditLogWriter }
+        set { currentSession.currentAuditLogWriter = newValue }
+    }
+    var currentAbortSignal: TaskAbortSignal? {
+        get { currentSession.currentAbortSignal }
+        set { currentSession.currentAbortSignal = newValue }
+    }
+    var currentTaskResourceBudget: TaskResourceBudget? {
+        get { currentSession.currentTaskResourceBudget }
+        set { currentSession.currentTaskResourceBudget = newValue }
+    }
+    var currentTeachingAbortSignal: TaskAbortSignal? {
+        get { currentSession.currentTeachingAbortSignal }
+        set { currentSession.currentTeachingAbortSignal = newValue }
+    }
+    var currentUploadFileAllowlist: UploadFileAllowlist {
+        get { currentSession.currentUploadFileAllowlist }
+        set { currentSession.currentUploadFileAllowlist = newValue }
+    }
+    var foregroundAssistCountdownWasCancelled: Bool {
+        get { currentSession.foregroundAssistCountdownWasCancelled }
+        set { currentSession.foregroundAssistCountdownWasCancelled = newValue }
+    }
+    var currentTaskSummonOriginInTopLeftGlobalPoints: CGPoint? {
+        get { currentSession.currentTaskSummonOriginInTopLeftGlobalPoints }
+        set { currentSession.currentTaskSummonOriginInTopLeftGlobalPoints = newValue }
+    }
+    var currentPlanningOrExecutionTask: Task<Void, Never>? {
+        get { currentSession.currentPlanningOrExecutionTask }
+        set { currentSession.currentPlanningOrExecutionTask = newValue }
+    }
+    var currentRunControl: TaskRunControl? {
+        get { currentSession.currentRunControl }
+        set { currentSession.currentRunControl = newValue }
+    }
+    var userTakeoverDetector: UserTakeoverDetector {
+        get { currentSession.userTakeoverDetector }
+        set { currentSession.userTakeoverDetector = newValue }
+    }
+    var lastSubmittedCommandText: String {
+        get { currentSession.lastSubmittedCommandText }
+        set { currentSession.lastSubmittedCommandText = newValue }
+    }
+    var commandSubmittedAtSystemUptime: TimeInterval? {
+        get { currentSession.commandSubmittedAtSystemUptime }
+        set { currentSession.commandSubmittedAtSystemUptime = newValue }
+    }
+    var frontmostApplicationProcessIdentifierWhenCommandWasSubmitted: pid_t? {
+        get { currentSession.frontmostApplicationProcessIdentifierWhenCommandWasSubmitted }
+        set { currentSession.frontmostApplicationProcessIdentifierWhenCommandWasSubmitted = newValue }
+    }
+    var currentChecklistPlanner: ChecklistPlanner? {
+        get { currentSession.currentChecklistPlanner }
+        set { currentSession.currentChecklistPlanner = newValue }
+    }
+    var pendingSafetyConfirmation: PendingUserAnswer<SafetyConfirmationAnswer> { currentSession.pendingSafetyConfirmation }
+    var pendingItemFailureDecision: PendingUserAnswer<ChecklistItemFailureDecision> { currentSession.pendingItemFailureDecision }
 }
