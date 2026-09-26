@@ -9,7 +9,9 @@ import AppKit
     private static let minimumContentOpacity: CGFloat = 0.5
 
     static func isTopLeftGlobalPointOverThisAppWindowContent(_ topLeftGlobalPoint: CGPoint) -> Bool {
-        let primaryDisplayHeightInPoints = NSScreen.screens.first?.frame.height ?? 0
+        // Unknown only before any display was seen; then the point can't be placed, and a click that might be on
+        // Dotto's own button must never count as the user taking over.
+        guard let primaryDisplayHeightInPoints = PrimaryDisplayHeightReader.primaryDisplayHeightInPoints else { return true }
         let appKitGlobalPoint = ScreenCoordinateConversion.appKitGlobalPoint(
             fromTopLeftGlobalPoint: topLeftGlobalPoint, primaryDisplayHeightInPoints: primaryDisplayHeightInPoints)
         return NSApp.windows.contains { thisAppWindow in

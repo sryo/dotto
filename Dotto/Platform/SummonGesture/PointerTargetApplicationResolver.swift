@@ -45,7 +45,8 @@ enum PointerTargetApplicationResolver {
     /// Where the pointer is now, in top-left global points. Read only when eligibility is re-evaluated, never per move.
     static func currentTopLeftGlobalPointerLocation() -> CGPoint {
         let appKitGlobalLocation = NSEvent.mouseLocation
-        let primaryDisplayHeightInPoints = NSScreen.screens.first?.frame.height ?? 0
+        // Only unknown before any display was ever seen; then no display can hold the point either way.
+        let primaryDisplayHeightInPoints = PrimaryDisplayHeightReader.primaryDisplayHeightInPoints ?? 0
         return CGPoint(x: appKitGlobalLocation.x, y: primaryDisplayHeightInPoints - appKitGlobalLocation.y)
     }
 

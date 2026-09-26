@@ -78,11 +78,16 @@ final class SummonGestureController {
         screenIsLocked = environment.screenIsLockedOrSessionIsInactive()
         observeWorkspaceNotifications()
         observeDistributedNotifications()
-        applicationNotificationObservers.append(NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshObservation() }
-        })
+        // Screen parameters also change without a display reconfiguration (the Dock or menu bar resizing the visible
+        // frame); a reconfiguration is only reported once Quartz has settled every display.
+        for screenChangeNotificationName in [NSApplication.didChangeScreenParametersNotification,
+                                             DisplayReconfigurationObserver.didFinishNotification] {
+            applicationNotificationObservers.append(NotificationCenter.default.addObserver(
+                forName: screenChangeNotificationName, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshObservation() }
+            })
+        }
         refreshObservation()
     }
 

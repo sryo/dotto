@@ -22,6 +22,7 @@ final class DottoAppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarPanelController: MenuBarPanelController?
     private var taskSessionController: TaskSessionController?
     private var actionBackend: AccessibilityActionBackend?
+    private let displayReconfigurationObserver = DisplayReconfigurationObserver()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("Dotto: version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")")
@@ -37,6 +38,8 @@ final class DottoAppDelegate: NSObject, NSApplicationDelegate {
         }
         let claudeTransport = AnthropicMessagesTransport(apiKeyStore: anthropicAPIKeyStore)
 
+        // First, so every coordinate flip from here on has a settled primary display height.
+        displayReconfigurationObserver.start()
         let windowServerBridge = PrivateWindowServerBridge()
         let windowCapturer = TargetWindowCapturer()
         let cursorController = CursorController(frameStreamer: windowCapturer)

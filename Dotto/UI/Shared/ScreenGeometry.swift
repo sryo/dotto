@@ -8,7 +8,9 @@ enum ScreenGeometry {
     private static let fallbackVisibleFrame = CGRect(x: 0, y: 0, width: 1440, height: 900)
 
     static var screenUnderMouse: NSScreen? {
-        screen(containingAppKitPoint: NSEvent.mouseLocation) ?? NSScreen.main
+        // NSScreen.main is the key window's screen, which says nothing for an app that is never key; the first screen
+        // is the one with the menu bar.
+        screen(containingAppKitPoint: NSEvent.mouseLocation) ?? NSScreen.screens.first
     }
 
     /// Edges included: the pointer can rest on a screen's top row, where AppKit's y equals `maxY`, which
@@ -23,10 +25,20 @@ enum ScreenGeometry {
         screen?.visibleFrame ?? fallbackVisibleFrame
     }
 
+    /// Never 0 (`PrimaryDisplayHeightResolution`): while displays reconfigure, the last settled height, which the
+    /// Platform display observer records. Before any display was ever seen, the fallback frame's height.
+    static var primaryDisplayHeightInPoints: CGFloat {
+        let cache = PrimaryDisplayHeightCache.shared
+        return PrimaryDisplayHeightResolution.resolve(
+            coreGraphicsMainDisplayHeight: CGDisplayBounds(CGMainDisplayID()).height,
+            appKitPrimaryScreenHeight: NSScreen.screens.first?.frame.height,
+            lastKnownHeight: cache.lastKnownHeight, displaysAreReconfiguring: cache.displaysAreReconfiguring)
+            ?? fallbackVisibleFrame.height
+    }
+
     /// Converts a window-server rectangle (top-left origin of the primary display, y down) to AppKit's global
     /// coordinates (bottom-left origin, y up).
     static func appKitFrame(fromTopLeftGlobalFrame topLeftGlobalFrame: CGRect) -> CGRect {
-        let primaryDisplayHeightInPoints = NSScreen.screens.first?.frame.height ?? 0
         return CGRect(x: topLeftGlobalFrame.minX, y: primaryDisplayHeightInPoints - topLeftGlobalFrame.maxY,
                       width: topLeftGlobalFrame.width, height: topLeftGlobalFrame.height)
     }

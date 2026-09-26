@@ -63,8 +63,10 @@ struct ObservedPointerMovement: Equatable, Sendable {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
             onMouseButtonPressed?()
         case .mouseMoved:
+            // No display height known at all means no display to draw on; the sample is dropped rather than misplaced.
+            guard let topLeftGlobalLocation = Self.topLeftGlobalLocation(of: observedEvent) else { return }
             onPointerMoved?(ObservedPointerMovement(
-                topLeftGlobalLocation: Self.topLeftGlobalLocation(of: observedEvent),
+                topLeftGlobalLocation: topLeftGlobalLocation,
                 timestampSeconds: observedEvent.timestamp,
                 anyMouseButtonHeld: NSEvent.pressedMouseButtons != 0))
         default:
@@ -76,10 +78,10 @@ struct ObservedPointerMovement: Equatable, Sendable {
     /// Where the event happened rather than where the pointer is by the time it is handled. A local event's location
     /// is relative to its window and a global one's is already in screen points; either is then flipped from
     /// AppKit's bottom-left origin to the top-left space the recognizer works in.
-    private static func topLeftGlobalLocation(of observedEvent: NSEvent) -> CGPoint {
+    private static func topLeftGlobalLocation(of observedEvent: NSEvent) -> CGPoint? {
         let appKitGlobalLocation = observedEvent.window?.convertPoint(toScreen: observedEvent.locationInWindow)
             ?? observedEvent.locationInWindow
-        let primaryDisplayHeightInPoints = NSScreen.screens.first?.frame.height ?? 0
+        guard let primaryDisplayHeightInPoints = PrimaryDisplayHeightReader.primaryDisplayHeightInPoints else { return nil }
         return CGPoint(x: appKitGlobalLocation.x, y: primaryDisplayHeightInPoints - appKitGlobalLocation.y)
     }
 }
