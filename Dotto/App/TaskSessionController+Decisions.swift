@@ -5,18 +5,22 @@ import AppKit
 extension TaskSessionController {
     // MARK: - Safety confirmation
 
-    func requestSafetyConfirmation(_ request: SafetyConfirmationRequest) async -> SafetyConfirmationAnswer {
-        // The executor is sequential, so a second concurrent request means something is
-        // wrong; declining it is the conservative answer.
-        guard !pendingSafetyConfirmation.isPending else { return .skipItem }
-        guard currentAbortSignal?.isAborted != true else { return .stopTask }
-        leavePausedState()
-        guard apply(.safetyConfirmationRequested(request)) else { return .stopTask }
+    func requestSafetyConfirmation(_ request: SafetyConfirmationRequest, in session: TaskSession) async -> SafetyConfirmationAnswer {
+        let immediateAnswer: SafetyConfirmationAnswer? = withSession(session) {
+            // The executor is sequential, so a second concurrent request means something is
+            // wrong; declining it is the conservative answer.
+            guard !pendingSafetyConfirmation.isPending else { return .skipItem }
+            guard currentAbortSignal?.isAborted != true else { return .stopTask }
+            leavePausedState()
+            guard apply(.safetyConfirmationRequested(request)) else { return .stopTask }
 
-        statusLine = "Waiting for your confirmation"
-        showChecklistPanelIfCursorCannotCarryIt()
-        cursorController.handle(.confirmationRequested(request))
-        return await pendingSafetyConfirmation.waitForAnswer()
+            statusLine = "Waiting for your confirmation"
+            showChecklistPanelIfCursorCannotCarryIt()
+            cursorController.handle(.confirmationRequested(request))
+            return nil
+        }
+        if let immediateAnswer { return immediateAnswer }
+        return await session.pendingSafetyConfirmation.waitForAnswer()
     }
 
     func answerPendingSafetyConfirmation(_ answer: SafetyConfirmationAnswer) {
@@ -35,16 +39,21 @@ extension TaskSessionController {
 
     // MARK: - Item failure decision
 
-    func requestItemFailureDecision(_ request: ChecklistItemFailureDecisionRequest) async -> ChecklistItemFailureDecision {
-        guard !pendingItemFailureDecision.isPending else { return .skipItem }
-        guard currentAbortSignal?.isAborted != true else { return .stopTask }
-        leavePausedState()
-        guard apply(.itemFailureDecisionRequested(request)) else { return .stopTask }
+    func requestItemFailureDecision(_ request: ChecklistItemFailureDecisionRequest,
+                                    in session: TaskSession) async -> ChecklistItemFailureDecision {
+        let immediateDecision: ChecklistItemFailureDecision? = withSession(session) {
+            guard !pendingItemFailureDecision.isPending else { return .skipItem }
+            guard currentAbortSignal?.isAborted != true else { return .stopTask }
+            leavePausedState()
+            guard apply(.itemFailureDecisionRequested(request)) else { return .stopTask }
 
-        statusLine = "An item failed — Retry, Skip or Stop?"
-        showChecklistPanelIfCursorCannotCarryIt()
-        cursorController.handle(.itemFailureDecisionRequested(request))
-        return await pendingItemFailureDecision.waitForAnswer()
+            statusLine = "An item failed — Retry, Skip or Stop?"
+            showChecklistPanelIfCursorCannotCarryIt()
+            cursorController.handle(.itemFailureDecisionRequested(request))
+            return nil
+        }
+        if let immediateDecision { return immediateDecision }
+        return await session.pendingItemFailureDecision.waitForAnswer()
     }
 
     func answerPendingItemFailureDecision(_ decision: ChecklistItemFailureDecision) {

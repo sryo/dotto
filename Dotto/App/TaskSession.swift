@@ -1,12 +1,32 @@
 import AppKit
 import Combine
 
+/// What each task gets for itself: the cursor that shows its work (with its overlay, pill and live view), the monitor
+/// that tells whether its window is covered, and the observer that notices the user moving or closing its window.
+struct TaskSessionServices {
+    var cursorController: CursorController
+    var visibilityMonitor: TargetWindowVisibilityMonitor
+    var targetWindowObserver: TargetWindowObserver
+}
+
 /// Everything that belongs to one task, from the command (or saved routine) that starts it to the moment its checklist
 /// is dismissed: its state, its target app, its audit log, Stop signal and budget, its planner conversation, its run
 /// control and pending questions, and its takeover detector. `TaskSessionController` holds one today; it is the unit
 /// several concurrent tasks (each in a different app) will each get.
 @MainActor
 final class TaskSession: ObservableObject {
+    let cursorController: CursorController
+    let visibilityMonitor: TargetWindowVisibilityMonitor
+    let targetWindowObserver: TargetWindowObserver
+    /// Created once the coordinator starts, because the panel reads the coordinator.
+    var checklistPanelController: ChecklistPanelController?
+
+    init(services: TaskSessionServices) {
+        cursorController = services.cursorController
+        visibilityMonitor = services.visibilityMonitor
+        targetWindowObserver = services.targetWindowObserver
+    }
+
     /// Names this task's leases on shared observers (the user-input tap).
     let sessionIdentifier = UUID().uuidString
     var runInputObservationHolderIdentifier: String { "run-" + sessionIdentifier }

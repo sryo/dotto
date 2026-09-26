@@ -12,15 +12,15 @@ extension TaskSessionController {
         cursorController.handle(.foregroundAssistWaitingForUser)
     }
 
-    func runForegroundAssistCountdown(countdownSeconds: Double, abortSignal: TaskAbortSignal) async -> Bool {
-        foregroundAssistCountdownWasCancelled = false
-        cursorController.handle(.foregroundAssistCountdownStarted)
+    func runForegroundAssistCountdown(countdownSeconds: Double, abortSignal: TaskAbortSignal, in session: TaskSession) async -> Bool {
+        session.foregroundAssistCountdownWasCancelled = false
+        session.cursorController.handle(.foregroundAssistCountdownStarted)
         let countdownEndUptimeSeconds = ProcessInfo.processInfo.systemUptime + countdownSeconds
         while ProcessInfo.processInfo.systemUptime < countdownEndUptimeSeconds {
-            if foregroundAssistCountdownWasCancelled || abortSignal.isAborted { return false }
+            if session.foregroundAssistCountdownWasCancelled || abortSignal.isAborted { return false }
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
-        return !foregroundAssistCountdownWasCancelled && !abortSignal.isAborted
+        return !session.foregroundAssistCountdownWasCancelled && !abortSignal.isAborted
     }
 
     func foregroundAssistPendingEnded() {

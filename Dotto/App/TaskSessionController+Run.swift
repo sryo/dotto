@@ -37,9 +37,8 @@ extension TaskSessionController {
 
         // The executor only ever talks to this run's proxy, so a stopped run that is still unwinding can't
         // touch the UI or confirmation state of a newer run.
-        let runScopedDelegate = TaskRunDelegateBridge(taskSessionController: self, runAbortSignal: abortSignal,
-                                                      foregroundAssistTurnQueue: foregroundAssistTurnQueue,
-                                                      foregroundAssistTurnOwnerIdentifier: currentSession.sessionIdentifier)
+        let runScopedDelegate = TaskRunDelegateBridge(taskSessionController: self, session: currentSession, runAbortSignal: abortSignal,
+                                                      foregroundAssistTurnQueue: foregroundAssistTurnQueue)
         var executionOptions = TaskExecutionOptions()
         executionOptions.runControl = runControl
         executionOptions.focusPolicy = currentTaskFocusPolicy
@@ -64,28 +63,31 @@ extension TaskSessionController {
         // A routine run skips planning, so nothing else has waited for a stopped run to release the backend.
         let previousRunTask = mostRecentlyStartedRunTask
         let pauseAwareActionBackend = actionBackend as? AccessibilityActionBackend
+        let session = currentSession
         let executionTask = Task { [weak self] in
             await previousRunTask?.value
             // Only now: the previous run's finishTask (which may hide the cursor) is over, so it can't hide this one.
-            if let self, self.currentAbortSignal === abortSignal, !abortSignal.isAborted {
+            if session.currentAbortSignal === abortSignal, !abortSignal.isAborted {
                 // The backend reports the task window with its first action.
-                self.cursorController.beginRun(ownedByRunWith: abortSignal,
-                                               startingAtSummonOriginInTopLeftGlobalPoints: runSummonOrigin)
+                session.cursorController.beginRun(ownedByRunWith: abortSignal,
+                                                  startingAtSummonOriginInTopLeftGlobalPoints: runSummonOrigin)
             }
             await pauseAwareActionBackend?.attachRunControl(runControl, forRunWith: abortSignal)
             let runSummary = await taskExecutor.run(approvedChecklist: executingChecklist, abortSignal: abortSignal)
-            // A newer task may have started after this one was stopped; its UI is not ours to touch.
-            guard let self, self.currentAbortSignal === abortSignal else { return }
-            // The executor already reported runFinished; the cursor shows done or stuck, then hides itself.
-            self.stopRunObservers()
-            self.stopRunAttentionTimers()
-            self.currentRunMetrics = metricsAccumulator.currentMetrics
-            // After Stop (including "Stop task" on a confirmation card) the state is already `aborted`.
-            guard self.isExecutingOrPaused else { return }
-            self.apply(.executionFinished(runSummary))
-            self.statusLine = TaskUserFacingMessages.userFacingDescription(ofStopReason: runSummary.stopReason)
-            // The summary (and a learned routine to review) opens beside the cursor while it shows done or stuck.
-            self.checklistPanelController?.showChecklistPanel(makeKey: false)
+            // A newer task may have started in this session after this one was stopped; its UI is not ours to touch.
+            guard let self, session.currentAbortSignal === abortSignal else { return }
+            self.withSession(session) {
+                // The executor already reported runFinished; the cursor shows done or stuck, then hides itself.
+                self.stopRunObservers()
+                self.stopRunAttentionTimers()
+                self.currentRunMetrics = metricsAccumulator.currentMetrics
+                // After Stop (including "Stop task" on a confirmation card) the state is already `aborted`.
+                guard self.isExecutingOrPaused else { return }
+                self.apply(.executionFinished(runSummary))
+                self.statusLine = TaskUserFacingMessages.userFacingDescription(ofStopReason: runSummary.stopReason)
+                // The summary (and a learned routine to review) opens beside the cursor while it shows done or stuck.
+                self.checklistPanelController?.showChecklistPanel(makeKey: false)
+            }
         }
         currentPlanningOrExecutionTask = executionTask
         mostRecentlyStartedRunTask = executionTask

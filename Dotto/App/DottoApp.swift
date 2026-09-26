@@ -43,7 +43,6 @@ final class DottoAppDelegate: NSObject, NSApplicationDelegate {
         displayReconfigurationObserver.start()
         let windowServerBridge = PrivateWindowServerBridge()
         let windowCapturer = TargetWindowCapturer()
-        let cursorController = CursorController(frameStreamer: windowCapturer)
         let elementReader = AccessibilityElementReader()
         let inputSynthesizer = InputSynthesizer(windowServerBridge: windowServerBridge)
         let userInputObserver = UserInputObserver()
@@ -53,7 +52,7 @@ final class DottoAppDelegate: NSObject, NSApplicationDelegate {
                                                     realUserInputCounter: userInputObserver.realUserInputCounter)
         // The reader, synthesizer, capturer and window-server bridge keep no per-task state, so every task's backend
         // shares them.
-        let makeActionBackend: @MainActor () -> ActionBackend = {
+        let makeActionBackend: @MainActor (CursorPresenting) -> ActionBackend = { taskCursorPresenter in
             AccessibilityActionBackend(
                 elementReader: elementReader,
                 inputSynthesizer: inputSynthesizer,
@@ -61,22 +60,26 @@ final class DottoAppDelegate: NSObject, NSApplicationDelegate {
                 windowServerBridge: windowServerBridge,
                 accessibilityModes: accessibilityModes,
                 openPanelDriver: openPanelDriver,
-                cursorPresenter: cursorController,
+                cursorPresenter: taskCursorPresenter,
                 automatedActivityRelay: automatedTargetActivityRelay
             )
+        }
+        // Each task streams its own window into its own live view, so it gets its own capturer.
+        let makeSessionServices: @MainActor () -> TaskSessionServices = {
+            TaskSessionServices(cursorController: CursorController(frameStreamer: TargetWindowCapturer()),
+                                visibilityMonitor: TargetWindowVisibilityMonitor(),
+                                targetWindowObserver: TargetWindowObserver(windowServerBridge: windowServerBridge))
         }
         let directRouteExecutionDependencies = Self.makeDirectRouteExecutionDependencies()
         let taskSessionController = TaskSessionController(dependencies: TaskSessionControllerDependencies(
             claudeTransport: claudeTransport,
             anthropicAPIKeyStore: anthropicAPIKeyStore,
             makeActionBackend: makeActionBackend,
+            makeSessionServices: makeSessionServices,
             keyboardMonitor: GlobalKeyboardMonitor(),
             pointerMovementObserver: PointerMovementObserver(),
-            cursorController: cursorController,
             userInputObserver: userInputObserver,
-            targetWindowObserver: TargetWindowObserver(windowServerBridge: windowServerBridge),
             automatedTargetActivityRelay: automatedTargetActivityRelay,
-            visibilityMonitor: TargetWindowVisibilityMonitor(),
             windowServerCapabilities: windowServerBridge.capabilities,
             attentionNotificationPoster: UserAttentionNotificationPoster(),
             demonstrationRecorder: DemonstrationRecorder(elementReader: elementReader, inputSynthesizer: inputSynthesizer),

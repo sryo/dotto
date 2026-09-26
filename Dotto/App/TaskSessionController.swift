@@ -4,15 +4,15 @@ import Combine
 struct TaskSessionControllerDependencies {
     var claudeTransport: ClaudeTransport
     var anthropicAPIKeyStore: AnthropicAPIKeyStore
-    /// A fresh backend for each task: its element ids, snapshot and held Accessibility modes are that task's alone.
-    var makeActionBackend: @MainActor () -> ActionBackend
+    /// A fresh backend for each task, reporting to that task's cursor: its element ids, snapshot and held
+    /// Accessibility modes are that task's alone.
+    var makeActionBackend: @MainActor (CursorPresenting) -> ActionBackend
+    /// A cursor, a visibility monitor and a window observer for each task.
+    var makeSessionServices: @MainActor () -> TaskSessionServices
     var keyboardMonitor: GlobalKeyboardMonitor
     var pointerMovementObserver: PointerMovementObserver
-    var cursorController: CursorController
     var userInputObserver: UserInputObserver
-    var targetWindowObserver: TargetWindowObserver
     var automatedTargetActivityRelay: AutomatedTargetActivityRelay
-    var visibilityMonitor: TargetWindowVisibilityMonitor
     var windowServerCapabilities: PrivateWindowServerCapabilities
     var attentionNotificationPoster: UserAttentionNotificationPoster
     var demonstrationRecorder: DemonstrationRecorder
@@ -76,16 +76,13 @@ final class TaskSessionController: ObservableObject {
     @Published var isMenuBarIconPulsing = false
     let claudeTransport: ClaudeTransport
     let anthropicAPIKeyStore: AnthropicAPIKeyStore
-    let makeActionBackend: @MainActor () -> ActionBackend
+    let makeActionBackend: @MainActor (CursorPresenting) -> ActionBackend
+    let makeSessionServices: @MainActor () -> TaskSessionServices
     let userInputObserver: UserInputObserver
-    let targetWindowObserver: TargetWindowObserver
     let automatedTargetActivityRelay: AutomatedTargetActivityRelay
-    let visibilityMonitor: TargetWindowVisibilityMonitor
     let demonstrationRecorder: DemonstrationRecorder
     let routineLibraryStore: RoutineLibraryStore
-    var checklistPanelController: ChecklistPanelController?
     var commandBarPanelController: CommandBarPanelController?
-    let cursorController: CursorController
     let attentionNotificationPoster: UserAttentionNotificationPoster
     let previousApplicationTracker = PreviousApplicationTracker()
     let keyboardMonitor: GlobalKeyboardMonitor
@@ -106,9 +103,12 @@ final class TaskSessionController: ObservableObject {
 
     /// Only one task's app may be brought forward at a time; every task's run takes its turn here.
     let foregroundAssistTurnQueue = ForegroundAssistTurnQueue()
-    /// The one task Dotto runs today. Its state is forwarded below under the names the flows and views already use.
-    let currentSession = TaskSession()
-    private var currentSessionChangeSubscription: AnyCancellable?
+    /// Every task Dotto holds (one today).
+    private(set) var sessions: [TaskSession] = []
+    /// The session the code running right now works on. Its state is forwarded below under the names the flows and
+    /// views already use; every entry point that belongs to a particular task sets it first (`withSession`).
+    private(set) var currentSession: TaskSession
+    private var sessionChangeSubscriptions: [ObjectIdentifier: AnyCancellable] = [:]
 
     private var permissionPollingTimer: Timer?
 
@@ -116,12 +116,10 @@ final class TaskSessionController: ObservableObject {
         self.claudeTransport = dependencies.claudeTransport
         self.anthropicAPIKeyStore = dependencies.anthropicAPIKeyStore
         self.makeActionBackend = dependencies.makeActionBackend
+        self.makeSessionServices = dependencies.makeSessionServices
         self.keyboardMonitor = dependencies.keyboardMonitor
         self.pointerMovementObserver = dependencies.pointerMovementObserver
-        self.cursorController = dependencies.cursorController
-        self.targetWindowObserver = dependencies.targetWindowObserver
         self.automatedTargetActivityRelay = dependencies.automatedTargetActivityRelay
-        self.visibilityMonitor = dependencies.visibilityMonitor
         self.windowServerCapabilities = dependencies.windowServerCapabilities
         self.attentionNotificationPoster = dependencies.attentionNotificationPoster
         self.userInputObserver = dependencies.userInputObserver
@@ -129,14 +127,66 @@ final class TaskSessionController: ObservableObject {
         self.routineLibraryStore = dependencies.routineLibraryStore
         self.directRouteExecutionDependencies = dependencies.directRouteExecutionDependencies
         self.permissionStatus = SystemPermissions.readCurrentStatus()
+        let firstSession = TaskSession(services: dependencies.makeSessionServices())
+        self.currentSession = firstSession
         refreshAnthropicAPIKeyState()
-        // Views observe the controller; a change inside the session must redraw them as before.
-        currentSessionChangeSubscription = currentSession.objectWillChange.sink { [weak self] _ in
+        adoptSession(firstSession)
+    }
+
+    // MARK: - Sessions
+
+    /// Runs `body` on `session`'s state. Everything a particular task triggers (its pill, its checklist, its run's
+    /// callbacks, an observer event for its app, its async work after each suspension) comes through here.
+    @discardableResult
+    func withSession<Result>(_ session: TaskSession, _ body: () -> Result) -> Result {
+        let previousSession = currentSession
+        currentSession = session
+        defer { currentSession = previousSession }
+        return body()
+    }
+
+    /// The session holding the pending question or answer with this identifier, if any.
+    func session(owningAttentionRequestIdentifier attentionRequestIdentifier: String?) -> TaskSession? {
+        guard let attentionRequestIdentifier else { return nil }
+        return sessions.first { $0.cursorController.viewModel.presentationState.attentionRequest?.requestIdentifier == attentionRequestIdentifier }
+    }
+
+    private func adoptSession(_ session: TaskSession) {
+        sessions.append(session)
+        // Views observe the controller; a change inside a session must redraw them.
+        sessionChangeSubscriptions[ObjectIdentifier(session)] = session.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
-        currentSession.onSessionStateDidChange = { [weak self] in
+        session.onSessionStateDidChange = { [weak self] in
             self?.summonGestureController?.refreshObservation()
         }
+    }
+
+    /// The per-task services report back into their own session.
+    private func wireSessionServices(_ session: TaskSession) {
+        let checklistPanelController = ChecklistPanelController(taskSessionController: self)
+        session.checklistPanelController = checklistPanelController
+        session.targetWindowObserver.onTargetWindowEvent = { [weak self, weak session] targetWindowEvent in
+            guard let self, let session else { return }
+            self.withSession(session) { self.routeTargetWindowEvent(targetWindowEvent) }
+        }
+        session.visibilityMonitor.onVisibilityChanged = { [weak session] targetWindowVisibility in
+            session?.cursorController.updateTargetWindowVisibility(targetWindowVisibility)
+        }
+        session.cursorController.onTargetWindowChanged = { [weak session] changedTargetWindow in
+            guard let session else { return }
+            session.visibilityMonitor.startMonitoring(changedTargetWindow, targetPointInWindow: { [weak session] in
+                session?.cursorController.viewModel.presentationState.targetPointInWindow
+            })
+        }
+        checklistPanelController.onVisibilityChanged = { [weak session] checklistIsOpen in
+            session?.cursorController.checklistIsOpen = checklistIsOpen
+        }
+        session.cursorController.onChecklistToggleRequested = { [weak self, weak session] in
+            guard let self, let session else { return }
+            self.withSession(session) { self.toggleChecklistBesideCursor() }
+        }
+        wireAttentionDelivery(for: session)
     }
 
     // MARK: - Lifecycle
@@ -144,12 +194,13 @@ final class TaskSessionController: ObservableObject {
     func start() {
         loadTaskFocusPolicy()
         commandBarPanelController = CommandBarPanelController(taskSessionController: self)
-        checklistPanelController = ChecklistPanelController(taskSessionController: self)
         previousApplicationTracker.shouldIgnoreActivation = { [weak self] activatedApplication in
-            // The target coming forward for an approved assist isn't where the user was.
+            // A target coming forward for an approved assist isn't where the user was.
             guard let self else { return false }
-            return self.cursorController.isForegroundAssistActive
-                && activatedApplication.processIdentifier == self.targetApplication?.processIdentifier
+            return self.sessions.contains { session in
+                session.cursorController.isForegroundAssistActive
+                    && activatedApplication.processIdentifier == session.targetApplication?.processIdentifier
+            }
         }
         previousApplicationTracker.start()
         loadSummonHotkey()
@@ -161,30 +212,13 @@ final class TaskSessionController: ObservableObject {
         userInputObserver.onUserInputObserved = { [weak self] observedEvent in
             self?.routeObservedUserInput(observedEvent)
         }
-        targetWindowObserver.onTargetWindowEvent = { [weak self] targetWindowEvent in
-            self?.routeTargetWindowEvent(targetWindowEvent)
-        }
         automatedTargetActivityRelay.onAutomatedTargetActivity = { [weak self] automatedActivity, timestampSeconds, targetProcessIdentifier in
             self?.routeAutomatedTargetActivity(automatedActivity, atTimestampSeconds: timestampSeconds,
                                                targetProcessIdentifier: targetProcessIdentifier)
         }
-        visibilityMonitor.onVisibilityChanged = { [weak self] targetWindowVisibility in
-            self?.cursorController.updateTargetWindowVisibility(targetWindowVisibility)
-        }
-        cursorController.onTargetWindowChanged = { [weak self] changedTargetWindow in
-            guard let self else { return }
-            self.visibilityMonitor.startMonitoring(changedTargetWindow, targetPointInWindow: { [weak self] in
-                self?.cursorController.viewModel.presentationState.targetPointInWindow
-            })
-        }
         startAttentionDelivery()
+        for session in sessions { wireSessionServices(session) }
         startSummonGesture()
-        checklistPanelController?.onVisibilityChanged = { [weak self] checklistIsOpen in
-            self?.cursorController.checklistIsOpen = checklistIsOpen
-        }
-        cursorController.onChecklistToggleRequested = { [weak self] in
-            self?.toggleChecklistBesideCursor()
-        }
 
         permissionPollingTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -361,7 +395,8 @@ final class TaskSessionController: ObservableObject {
                                         "windowServerCapabilities": windowServerCapabilities.auditDescription]
                                   .merging(additionalAuditDetails) { _, additionalDetail in additionalDetail })
         return TaskStartResources(taskIdentifier: taskIdentifier, auditLogWriter: auditLogWriter, abortSignal: TaskAbortSignal(),
-                                  taskResourceBudget: TaskResourceBudget(safetyLimits: .standard), actionBackend: makeActionBackend())
+                                  taskResourceBudget: TaskResourceBudget(safetyLimits: .standard),
+                                  actionBackend: makeActionBackend(currentSession.cursorController))
     }
 
     func adoptTaskStartResources(_ taskStartResources: TaskStartResources) {
@@ -494,6 +529,10 @@ extension TaskSessionController {
         set { currentSession.frontmostApplicationProcessIdentifierWhenCommandWasSubmitted = newValue }
     }
     var actionBackend: ActionBackend? { currentSession.actionBackend }
+    var cursorController: CursorController { currentSession.cursorController }
+    var visibilityMonitor: TargetWindowVisibilityMonitor { currentSession.visibilityMonitor }
+    var targetWindowObserver: TargetWindowObserver { currentSession.targetWindowObserver }
+    var checklistPanelController: ChecklistPanelController? { currentSession.checklistPanelController }
     var currentChecklistPlanner: ChecklistPlanner? {
         get { currentSession.currentChecklistPlanner }
         set { currentSession.currentChecklistPlanner = newValue }

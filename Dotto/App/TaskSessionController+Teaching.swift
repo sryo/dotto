@@ -38,18 +38,21 @@ extension TaskSessionController {
         currentTeachingAbortSignal = teachingAbortSignal
         let demonstrationRoutineCompiler = DemonstrationRoutineCompiler(transport: claudeTransport, auditLogWriter: auditLogWriter,
                                                                         taskResourceBudget: taskResourceBudget)
+        let session = currentSession
         Task { [weak self] in
             do {
                 let taughtRoutine = try await demonstrationRoutineCompiler.compileRoutine(
                     from: demonstrationRecording, checklist: checklist, demonstratedItem: demonstratedItem,
                     routineIdentifier: "routine-" + checklist.taskIdentifier, abortSignal: teachingAbortSignal)
-                guard let self, self.currentTeachingAbortSignal === teachingAbortSignal else { return }
-                self.taughtRoutineAwaitingReview = taughtRoutine
-                self.statusLine = "Review what Dotto learned"
+                guard session.currentTeachingAbortSignal === teachingAbortSignal else { return }
+                session.taughtRoutineAwaitingReview = taughtRoutine
+                session.statusLine = "Review what Dotto learned"
             } catch {
-                guard let self, self.currentTeachingAbortSignal === teachingAbortSignal else { return }
+                guard let self, session.currentTeachingAbortSignal === teachingAbortSignal else { return }
                 let failureReason = TaskUserFacingMessages.userFacingDescription(ofDemonstrationCompileError: error)
-                self.completeTeaching(statusLineAfterTeaching: "Couldn't learn a routine (\(failureReason)). Dotto will use Claude for each item.")
+                self.withSession(session) {
+                    self.completeTeaching(statusLineAfterTeaching: "Couldn't learn a routine (\(failureReason)). Dotto will use Claude for each item.")
+                }
             }
         }
     }

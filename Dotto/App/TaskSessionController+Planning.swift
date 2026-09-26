@@ -83,6 +83,7 @@ extension TaskSessionController {
         checklistPlanner.attachedFilePathsForPrompt = attachedFilePathsForPrompt
         currentChecklistPlanner = checklistPlanner
         let onPlanningProgress = planningProgressHandler(for: abortSignal)
+        let session = currentSession
 
         let planningTask = Task { [weak self] in
             // The previous run shares the ActionBackend; preparing it while that run is still finishing
@@ -95,7 +96,7 @@ extension TaskSessionController {
                     let plannerDirectRouteContext = await self.makePlannerDirectRouteContext(commandText: trimmedCommandText,
                                                                                             targetApplication: targetApplication)
                     try abortSignal.throwIfAborted()
-                    guard self.currentAbortSignal === abortSignal else { return }
+                    guard session.currentAbortSignal === abortSignal else { return }
                     self.directRouteSessionState.currentPlannerContext = plannerDirectRouteContext
                     checklistPlanner.directRouteContext = plannerDirectRouteContext
                     checklistPlanner.directRouteFileSystemReader = self.directRouteExecutionDependencies?.fileSystemReader
@@ -108,11 +109,11 @@ extension TaskSessionController {
                     abortSignal: abortSignal,
                     onProgress: onPlanningProgress
                 )
-                guard let self, self.currentAbortSignal === abortSignal, !abortSignal.isAborted else { return }
-                self.showPlanningResult(planningResult)
+                guard let self, session.currentAbortSignal === abortSignal, !abortSignal.isAborted else { return }
+                self.withSession(session) { self.showPlanningResult(planningResult) }
             } catch {
-                guard let self, self.currentAbortSignal === abortSignal, !abortSignal.isAborted else { return }
-                self.showPlanningFailure(error, auditLogWriter: auditLogWriter)
+                guard let self, session.currentAbortSignal === abortSignal, !abortSignal.isAborted else { return }
+                self.withSession(session) { self.showPlanningFailure(error, auditLogWriter: auditLogWriter) }
             }
         }
         currentPlanningOrExecutionTask = planningTask
@@ -127,7 +128,7 @@ extension TaskSessionController {
         }
         commandBarPanelController.morphSubmittedCommandPill(
             submittedCommandPill, intoStatusPillAt: heldStatusPillFrame, cursorViewModel: cursorController.viewModel,
-            onMorphFinished: { [weak self] in self?.cursorController.finishCommandPillHandoff() })
+            onMorphFinished: { [weak session = currentSession] in session?.cursorController.finishCommandPillHandoff() })
     }
 
     // MARK: - The planning thread
@@ -147,16 +148,17 @@ extension TaskSessionController {
         currentPlanningProgress = .thinking
         cursorController.resumePlanningAfterReply()
         let onPlanningProgress = planningProgressHandler(for: abortSignal)
+        let session = currentSession
 
         let planningTask = Task { [weak self] in
             do {
                 let planningResult = try await checklistPlanner.continuePlanning(
                     withUserReply: trimmedReplyText, abortSignal: abortSignal, onProgress: onPlanningProgress)
-                guard let self, self.currentAbortSignal === abortSignal, !abortSignal.isAborted else { return }
-                self.showPlanningResult(planningResult)
+                guard let self, session.currentAbortSignal === abortSignal, !abortSignal.isAborted else { return }
+                self.withSession(session) { self.showPlanningResult(planningResult) }
             } catch {
-                guard let self, self.currentAbortSignal === abortSignal, !abortSignal.isAborted else { return }
-                self.showPlanningFailure(error, auditLogWriter: auditLogWriter)
+                guard let self, session.currentAbortSignal === abortSignal, !abortSignal.isAborted else { return }
+                self.withSession(session) { self.showPlanningFailure(error, auditLogWriter: auditLogWriter) }
             }
         }
         currentPlanningOrExecutionTask = planningTask
@@ -164,11 +166,12 @@ extension TaskSessionController {
     }
 
     private func planningProgressHandler(for abortSignal: TaskAbortSignal) -> @MainActor @Sendable (ChecklistPlanningProgress) -> Void {
-        { [weak self] planningProgress in
-            guard let self, self.currentAbortSignal === abortSignal, !abortSignal.isAborted else { return }
-            self.statusLine = planningProgress.statusLineText
-            self.currentPlanningProgress = planningProgress
-            self.cursorController.showPlanningProgress(planningProgress)
+        let session = currentSession
+        return { [weak session] planningProgress in
+            guard let session, session.currentAbortSignal === abortSignal, !abortSignal.isAborted else { return }
+            session.statusLine = planningProgress.statusLineText
+            session.currentPlanningProgress = planningProgress
+            session.cursorController.showPlanningProgress(planningProgress)
         }
     }
 

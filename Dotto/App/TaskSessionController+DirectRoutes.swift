@@ -157,9 +157,8 @@ extension TaskSessionController {
             checklistPanelController?.showChecklistPanel(makeKey: false)
             return
         }
-        let runScopedDelegate = TaskRunDelegateBridge(taskSessionController: self, runAbortSignal: abortSignal,
-                                                      foregroundAssistTurnQueue: foregroundAssistTurnQueue,
-                                                      foregroundAssistTurnOwnerIdentifier: currentSession.sessionIdentifier)
+        let runScopedDelegate = TaskRunDelegateBridge(taskSessionController: self, session: currentSession, runAbortSignal: abortSignal,
+                                                      foregroundAssistTurnQueue: foregroundAssistTurnQueue)
         let directRouteExecutor = DirectRouteExecutor(
             dependencies: directRouteExecutionDependencies,
             confirmationRequester: runScopedDelegate,
@@ -170,25 +169,28 @@ extension TaskSessionController {
             focusPolicy: currentTaskFocusPolicy)
         let previousRunTask = mostRecentlyStartedRunTask
         let undoTaskInProgress = directRouteSessionState.currentUndoTask
+        let session = currentSession
         let executionTask = Task { [weak self] in
             await previousRunTask?.value
             // Files an undo is still putting back must not be moved again underneath it.
             await undoTaskInProgress?.value
-            if let self, self.currentAbortSignal === abortSignal, !abortSignal.isAborted, runSummonOrigin != nil {
+            if session.currentAbortSignal === abortSignal, !abortSignal.isAborted, runSummonOrigin != nil {
                 // The cursor stays parked at the summon point for the whole run: no window, no flight.
-                self.cursorController.beginRun(ownedByRunWith: abortSignal, startingAtSummonOriginInTopLeftGlobalPoints: runSummonOrigin)
+                session.cursorController.beginRun(ownedByRunWith: abortSignal, startingAtSummonOriginInTopLeftGlobalPoints: runSummonOrigin)
             }
             let directRouteRunSummary = await directRouteExecutor.run(approvedChecklist: executingChecklist, abortSignal: abortSignal)
-            guard let self, self.currentAbortSignal === abortSignal else { return }
-            self.stopRunAttentionTimers()
-            // Kept even after Stop: what already changed can still be undone from the stopped task's summary.
-            self.directRouteSessionState.lastRunReport = directRouteRunSummary.report
-            self.directRouteSessionState.runProgress = nil
-            self.refreshMostRecentUndoableJournal()
-            guard self.isExecutingOrPaused else { return }
-            self.apply(.executionFinished(directRouteRunSummary.taskRunSummary))
-            self.statusLine = TaskUserFacingMessages.userFacingDescription(ofStopReason: directRouteRunSummary.taskRunSummary.stopReason)
-            self.checklistPanelController?.showChecklistPanel(makeKey: false)
+            guard let self, session.currentAbortSignal === abortSignal else { return }
+            self.withSession(session) {
+                self.stopRunAttentionTimers()
+                // Kept even after Stop: what already changed can still be undone from the stopped task's summary.
+                self.directRouteSessionState.lastRunReport = directRouteRunSummary.report
+                self.directRouteSessionState.runProgress = nil
+                self.refreshMostRecentUndoableJournal()
+                guard self.isExecutingOrPaused else { return }
+                self.apply(.executionFinished(directRouteRunSummary.taskRunSummary))
+                self.statusLine = TaskUserFacingMessages.userFacingDescription(ofStopReason: directRouteRunSummary.taskRunSummary.stopReason)
+                self.checklistPanelController?.showChecklistPanel(makeKey: false)
+            }
         }
         currentPlanningOrExecutionTask = executionTask
         mostRecentlyStartedRunTask = executionTask
@@ -227,7 +229,7 @@ extension TaskSessionController {
         statusLine = "Undoing…"
         let undoAbortSignal = TaskAbortSignal()
         directRouteSessionState.currentUndoAbortSignal = undoAbortSignal
-        directRouteSessionState.currentUndoTask = Task { [weak self] in
+        directRouteSessionState.currentUndoTask = Task { [weak self, weak undoingSession = currentSession] in
             do {
                 // The undo runs off the main actor (`@concurrent`); only its progress reports hop back here.
                 let undoReport = try await undoRunner.undo(journalIdentifier: journalIdentifier, abortSignal: undoAbortSignal,
@@ -235,10 +237,10 @@ extension TaskSessionController {
                     await MainActor.run { directRouteSessionState.undoProgress = undoProgress }
                 })
                 directRouteSessionState.lastUndoReport = undoReport
-                self?.statusLine = undoReport.skippedCount == 0 ? "Undone" : "Partly undone"
+                undoingSession?.statusLine = undoReport.skippedCount == 0 ? "Undone" : "Partly undone"
             } catch {
                 directRouteSessionState.undoFailureMessage = "Couldn't undo the task (\(error.localizedDescription))."
-                self?.statusLine = "Undo failed"
+                undoingSession?.statusLine = "Undo failed"
             }
             directRouteSessionState.undoProgress = nil
             directRouteSessionState.undoIsRunning = false

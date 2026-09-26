@@ -13,16 +13,6 @@ extension TaskSessionController {
 
     func startAttentionDelivery() {
         loadAttentionAndCursorPreferences()
-        cursorController.onDecisionOptionChosen = { [weak self] userDecisionAnswer in
-            self?.answerUserDecision(userDecisionAnswer)
-        }
-        cursorController.onAttentionRequestChanged = { [weak self] attentionRequest in
-            self?.deliverAttention(for: attentionRequest)
-        }
-        cursorController.onAttentionNudge = { [weak self] unansweredAttentionRequest in
-            guard let self, self.attentionDeliveryChannels(for: unansweredAttentionRequest).playsSound else { return }
-            AttentionChime.play(for: unansweredAttentionRequest.kind)
-        }
         attentionNotificationPoster.onDecisionOptionChosen = { [weak self] decisionOptionIdentifier, attentionRequestIdentifier in
             self?.answerUserDecision(UserDecisionAnswer(optionIdentifier: decisionOptionIdentifier,
                                                         attentionRequestIdentifier: attentionRequestIdentifier))
@@ -35,12 +25,39 @@ extension TaskSessionController {
         }
     }
 
+    /// Each task's cursor carries its own questions; what the user answers there goes back to that task.
+    func wireAttentionDelivery(for session: TaskSession) {
+        session.cursorController.liveViewCorner = liveViewCorner
+        session.cursorController.styleConfiguration = cursorStyleConfiguration
+        // Resume, Pause, Stop and Cancel carry no request; the pill they were clicked on says whose they are.
+        session.cursorController.onDecisionOptionChosen = { [weak self, weak session] userDecisionAnswer in
+            guard let self, let session else { return }
+            self.withSession(session) { self.answerUserDecisionInCurrentSession(userDecisionAnswer) }
+        }
+        session.cursorController.onAttentionRequestChanged = { [weak self, weak session] attentionRequest in
+            guard let self, let session else { return }
+            self.withSession(session) { self.deliverAttention(for: attentionRequest) }
+        }
+        session.cursorController.onAttentionNudge = { [weak self, weak session] unansweredAttentionRequest in
+            guard let self, let session,
+                  self.withSession(session, { self.attentionDeliveryChannels(for: unansweredAttentionRequest).playsSound }) else { return }
+            AttentionChime.play(for: unansweredAttentionRequest.kind)
+        }
+    }
+
     // MARK: - Answers
 
-    /// The one entry point for answers from the cursor pill, the live view and notification actions. Every answer
-    /// carries the request it was given for and is dropped once that request is no longer the pending one
-    /// (answered elsewhere, or the run moved on or stopped); see UserDecisionAnswerPolicy.
+    /// Answers from notification actions: the request they name says which task they belong to. An answer whose
+    /// request no session holds any more is dropped.
     func answerUserDecision(_ userDecisionAnswer: UserDecisionAnswer) {
+        guard let answeringSession = session(owningAttentionRequestIdentifier: userDecisionAnswer.attentionRequestIdentifier) else { return }
+        withSession(answeringSession) { answerUserDecisionInCurrentSession(userDecisionAnswer) }
+    }
+
+    /// The one path for every answer, from the cursor pill, the live view or a notification. Every answer carries
+    /// the request it was given for and is dropped once that request is no longer the pending one (answered
+    /// elsewhere, or the run moved on or stopped); see UserDecisionAnswerPolicy.
+    private func answerUserDecisionInCurrentSession(_ userDecisionAnswer: UserDecisionAnswer) {
         let pendingAttentionRequestIdentifier = cursorController.viewModel.presentationState.attentionRequest?.requestIdentifier
         guard UserDecisionAnswerPolicy.accepts(userDecisionAnswer, pendingAttentionRequestIdentifier: pendingAttentionRequestIdentifier) else {
             return
@@ -109,7 +126,7 @@ extension TaskSessionController {
 
     func updateLiveViewCorner(_ newLiveViewCorner: ScreenCorner) {
         liveViewCorner = newLiveViewCorner
-        cursorController.liveViewCorner = newLiveViewCorner
+        for session in sessions { session.cursorController.liveViewCorner = newLiveViewCorner }
         UserDefaults.standard.set(newLiveViewCorner.rawValue, forKey: Self.liveViewCornerDefaultsKey)
     }
 
@@ -122,11 +139,9 @@ extension TaskSessionController {
            let storedCorner = ScreenCorner(rawValue: storedCornerName) {
             liveViewCorner = storedCorner
         }
-        cursorController.liveViewCorner = liveViewCorner
         if let ownerCursorStyleJSON = UserDefaults.standard.string(forKey: Self.cursorStyleJSONDefaultsKey),
            let ownerCursorStyle = try? CursorStyleConfiguration.decodingOwnerJSON(Data(ownerCursorStyleJSON.utf8)) {
             cursorStyleConfiguration = ownerCursorStyle
         }
-        cursorController.styleConfiguration = cursorStyleConfiguration
     }
 }

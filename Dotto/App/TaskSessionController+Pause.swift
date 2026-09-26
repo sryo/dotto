@@ -7,7 +7,7 @@ extension TaskSessionController {
     /// assist and its restore) reaches every session.
     func routeAutomatedTargetActivity(_ automatedActivity: AutomatedTargetActivity, atTimestampSeconds timestampSeconds: TimeInterval,
                                       targetProcessIdentifier: pid_t?) {
-        for session in [currentSession] where targetProcessIdentifier == nil
+        for session in sessions where targetProcessIdentifier == nil
             || session.targetApplication?.processIdentifier == targetProcessIdentifier {
             session.userTakeoverDetector.noteAutomatedActivity(automatedActivity, atTimestampSeconds: timestampSeconds)
         }
@@ -66,16 +66,28 @@ extension TaskSessionController {
         cursorController.handle(.resumed)
     }
 
-    /// Resume, Allow, Skip and the other pill answers: the click that answered must not come back as a takeover.
+    /// Resume, Allow, Skip and the other pill answers: the click that answered must not come back as a takeover. The
+    /// click landed on Dotto's own panel, not on any task's app, so every task hears about it.
     func noteUserAnsweredThisAppPanel() {
-        userTakeoverDetector.noteUserAnsweredThisAppPanel(atTimestampSeconds: UserInputObserver.currentMonotonicTimestampSeconds())
+        let answerTimestampSeconds = UserInputObserver.currentMonotonicTimestampSeconds()
+        for session in sessions {
+            session.userTakeoverDetector.noteUserAnsweredThisAppPanel(atTimestampSeconds: answerTimestampSeconds)
+        }
     }
 
+    /// Every task sees the user's input and decides for its own app: a click belongs to the task whose app owns the
+    /// window under it, a key to the task whose app is in front.
     func routeObservedUserInput(_ observedEvent: ObservedUserInputEvent) {
         // Clicking Pause or Skip on Dotto's own panels is not a takeover, nor part of a demonstration.
         if userInputObserver.pointerEventWasDeliveredToThisApp(observedEvent) || Self.isPointerEventOverThisAppWindow(observedEvent) {
             return
         }
+        for session in sessions {
+            withSession(session) { routeObservedUserInputInCurrentSession(observedEvent) }
+        }
+    }
+
+    private func routeObservedUserInputInCurrentSession(_ observedEvent: ObservedUserInputEvent) {
         switch sessionState {
         case .executing:
             guard let targetProcessIdentifier = targetApplication?.processIdentifier else { return }
