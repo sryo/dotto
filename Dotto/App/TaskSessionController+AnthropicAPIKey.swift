@@ -5,7 +5,7 @@ import AppKit
 extension TaskSessionController {
     static let claudeConsoleAPIKeysPageURL = URL(string: "https://platform.claude.com/settings/keys")!
 
-    var hasAnthropicAPIKey: Bool { maskedAnthropicAPIKey != nil }
+    var hasAnthropicAPIKey: Bool { maskedAnthropicAPIKey != nil || usesMockClaudeTransport }
 
     func refreshAnthropicAPIKeyState() {
         do {

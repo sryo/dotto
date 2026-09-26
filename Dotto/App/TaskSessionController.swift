@@ -3,6 +3,8 @@ import Combine
 
 struct TaskSessionControllerDependencies {
     var claudeTransport: ClaudeTransport
+    /// Debug builds only (`MockClaudeTransport`): no key is needed, since nothing is sent.
+    var usesMockClaudeTransport = false
     var anthropicAPIKeyStore: AnthropicAPIKeyStore
     /// A fresh backend for each task, reporting to that task's cursor: its element ids, snapshot and held
     /// Accessibility modes are that task's alone.
@@ -76,6 +78,7 @@ final class TaskSessionController: ObservableObject {
     /// The menu bar icon pulses while a decision waits for the user.
     @Published var isMenuBarIconPulsing = false
     let claudeTransport: ClaudeTransport
+    let usesMockClaudeTransport: Bool
     let anthropicAPIKeyStore: AnthropicAPIKeyStore
     let makeActionBackend: @MainActor (CursorPresenting) -> ActionBackend
     let makeSessionServices: @MainActor () -> TaskSessionServices
@@ -113,6 +116,7 @@ final class TaskSessionController: ObservableObject {
 
     init(dependencies: TaskSessionControllerDependencies) {
         self.claudeTransport = dependencies.claudeTransport
+        self.usesMockClaudeTransport = dependencies.usesMockClaudeTransport
         self.anthropicAPIKeyStore = dependencies.anthropicAPIKeyStore
         self.makeActionBackend = dependencies.makeActionBackend
         self.makeSessionServices = dependencies.makeSessionServices

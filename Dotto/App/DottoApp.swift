@@ -37,7 +37,16 @@ final class DottoAppDelegate: NSObject, NSApplicationDelegate {
             // The store's errors carry only the Keychain's status text, never the key.
             print("Dotto: \(error.localizedDescription)")
         }
-        let claudeTransport = AnthropicMessagesTransport(apiKeyStore: anthropicAPIKeyStore)
+        var claudeTransport: ClaudeTransport = AnthropicMessagesTransport(apiKeyStore: anthropicAPIKeyStore)
+        var usesMockClaudeTransport = false
+        #if DEBUG
+        // Debug builds only: canned answers instead of the API, for trying Dotto without spending credits.
+        if MockClaudeTransport.isEnabled {
+            claudeTransport = MockClaudeTransport()
+            usesMockClaudeTransport = true
+            print("Dotto: using the mock Claude transport; no request reaches Anthropic")
+        }
+        #endif
 
         // First, so every coordinate flip from here on has a settled primary display height.
         displayReconfigurationObserver.start()
@@ -73,6 +82,7 @@ final class DottoAppDelegate: NSObject, NSApplicationDelegate {
         let directRouteExecutionDependencies = Self.makeDirectRouteExecutionDependencies()
         let taskSessionController = TaskSessionController(dependencies: TaskSessionControllerDependencies(
             claudeTransport: claudeTransport,
+            usesMockClaudeTransport: usesMockClaudeTransport,
             anthropicAPIKeyStore: anthropicAPIKeyStore,
             makeActionBackend: makeActionBackend,
             makeSessionServices: makeSessionServices,
