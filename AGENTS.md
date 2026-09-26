@@ -107,7 +107,8 @@ What else the app does:
   (`AccessibilityModeHolds`), and the user-input tap runs while any task needs it (`InputObservationLeases`). Every
   entry point that belongs to a task runs on its session (`TaskSessionController.withSession`); each checklist reads
   the coordinator through a `TaskSessionScope` bound to its session. The menu bar lists the tasks with Show and
-  Stop (and Stop all).
+  Stop (and Stop all). Covered tasks' live views share the corner: one expanded, the others chips stacked past it
+  (`Core/Cursor/LiveViewStack`, wired in `App/TaskSessionController+LiveViews`); toggling a chip expands it.
 - **Background work.** Dotto works in the target app while the user keeps using other apps. It delivers input
   without taking focus, through the tiers `Core/InputDelivery/InputTierPlanner` picks: Accessibility actions and
   values, then per-process keys. When input provably didn't land, or a step needs the app in front (file dialogs,
@@ -201,7 +202,7 @@ resources: `Info.plist`, `Dotto.entitlements` and `Assets.xcassets`.
 
 | Layer | May import / use | Holds |
 |---|---|---|
-| `Dotto/App/` | everything | `DottoApp` (the composition root, which wires every concrete type) and `TaskSessionController` (the coordinator, split per flow into `+Planning`, `+Run`, `+Decisions`, `+Pause`, `+ExecutionObserving`, `+Teaching`, `+SavedRoutines`, `+Attention`, `+ForegroundAssist`, `+SummonHotkey`, `+SummonGesture`, `+AnthropicAPIKey` and `+DirectRoutes`, with `SummonGestureController` running the gesture; it conforms to no executor protocol, so only a run-scoped `TaskRunDelegateBridge` is handed to Core) |
+| `Dotto/App/` | everything | `DottoApp` (the composition root, which wires every concrete type) and `TaskSessionController` (the coordinator, split per flow into `+Planning`, `+Run`, `+Decisions`, `+Pause`, `+ExecutionObserving`, `+Teaching`, `+SavedRoutines`, `+Attention`, `+ForegroundAssist`, `+SummonHotkey`, `+SummonGesture`, `+AnthropicAPIKey`, `+DirectRoutes` and `+LiveViews`, with `SummonGestureController` running the gesture; it conforms to no executor protocol, so only a run-scoped `TaskRunDelegateBridge` is handed to Core) |
 | `Dotto/Core/<Feature>/` | **Foundation and CoreGraphics only** | pure logic: models, planning, the agent loop, execution, replay, safety, verification, audit |
 | `Dotto/Platform/<Feature>/` | Core plus macOS frameworks (AppKit, AX, CGEvent, ScreenCaptureKit, Security) | real implementations of Core protocols. Never uses UI or App types |
 | `Dotto/UI/<Feature>/` | Core, SwiftUI and AppKit | SwiftUI views and the `NSPanel` controllers that host them |

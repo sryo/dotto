@@ -106,6 +106,8 @@ final class TaskSessionController: ObservableObject {
     /// views already use; every entry point that belongs to a particular task sets it first (`withSession`).
     private(set) var currentSession: TaskSession
     private var sessionChangeSubscriptions: [ObjectIdentifier: AnyCancellable] = [:]
+    /// Which covered task's live view is expanded; the others are chips stacked from the same corner.
+    var liveViewStack = LiveViewStack()
 
     private var permissionPollingTimer: Timer?
 
@@ -236,6 +238,7 @@ final class TaskSessionController: ObservableObject {
             guard let self, let session else { return }
             self.withSession(session) { self.toggleChecklistBesideCursor() }
         }
+        wireLiveViewStacking(for: session)
         wireAttentionDelivery(for: session)
     }
 
@@ -485,6 +488,7 @@ final class TaskSessionController: ObservableObject {
 
     func resetPerTaskResources() {
         currentSession.resetPerTaskResources(taskFocusPolicyForNextTask: taskFocusPolicy)
+        liveViewStack.forgetUserChoice(currentSession.sessionIdentifier)
         directRouteSessionState.clearTaskResult()
     }
 

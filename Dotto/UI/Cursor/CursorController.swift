@@ -413,7 +413,36 @@ final class CursorController: CursorPresenting {
         updateSurfaces()
     }
 
+    /// With several tasks the coordinator decides which live view is expanded (`LiveViewStack`); it then calls
+    /// `setLiveViewCollapsed`.
+    var onLiveViewCollapseToggleRequested: (() -> Void)?
+    /// Called when this cursor's surface changes (for example to or from the live view).
+    var onSurfaceChanged: ((CursorSurface) -> Void)?
+    var onLiveViewSizeChange: (() -> Void)? {
+        get { surfaces.onLiveViewSizeChange }
+        set { surfaces.onLiveViewSizeChange = newValue }
+    }
+    var liveViewStackOffsetInPoints: CGFloat {
+        get { surfaces.liveViewStackOffsetInPoints }
+        set { surfaces.liveViewStackOffsetInPoints = newValue }
+    }
+    var liveViewCardHeightIfShown: CGFloat? { surfaces.liveViewCardHeightIfShown }
+    var isLiveViewCollapsed: Bool { viewModel.isCollapsed }
+
+    func setLiveViewCollapsed(_ collapsed: Bool) {
+        guard viewModel.isCollapsed != collapsed else { return }
+        toggleLiveViewCollapsedHere()
+    }
+
     func toggleLiveViewCollapsed() {
+        if let onLiveViewCollapseToggleRequested {
+            onLiveViewCollapseToggleRequested()
+            return
+        }
+        toggleLiveViewCollapsedHere()
+    }
+
+    private func toggleLiveViewCollapsedHere() {
         viewModel.isCollapsed.toggle()
         viewModel.liveViewBounceCount += 1
         // Collapsed, the live view shows no picture, so it doesn't capture one either.
@@ -613,7 +642,9 @@ final class CursorController: CursorPresenting {
             nextSurface = cursorIsActive && viewModel.surface != .parkedAtSummonOrigin ? viewModel.surface : .hidden
         }
 
+        let surfaceChanged = viewModel.surface != nextSurface
         viewModel.surface = nextSurface
+        if surfaceChanged { onSurfaceChanged?(nextSurface) }
         surfaces.show(nextSurface, targetWindow: targetWindow, parkedTipInTopLeftGlobalPoints: parkedTipInTopLeftGlobalPoints,
                       reducesMotion: reducesMotion)
         updateStreamingIntent()

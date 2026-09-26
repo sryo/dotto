@@ -66,6 +66,26 @@ final class CursorSurfaces {
     /// The last frame Dotto gave the live view; a move to any other frame is the user dragging it.
     private var liveViewPanelFrameSetByThisApp: CGRect?
     private var liveViewPanelMoveObserver: NSObjectProtocol?
+    /// How far from its corner this live view sits, past the other tasks' live views (`LiveViewStack`). Ignored once
+    /// the user has dragged it somewhere.
+    var liveViewStackOffsetInPoints: CGFloat = 0 {
+        didSet {
+            guard liveViewStackOffsetInPoints != oldValue, liveViewPanelUserAnchor == nil else { return }
+            liveViewPanelFrameApplier.scheduleFrameUpdate { [weak self] in
+                self?.liveViewPanelFrame(forPanelSize: self?.liveViewContentSizeBox.latestContentSize ?? .zero)
+            }
+        }
+    }
+    /// Called when the live view's size changes (collapsing, expanding, a docked question), so the stack can move the
+    /// other tasks' live views.
+    var onLiveViewSizeChange: (() -> Void)?
+
+    /// The live view's card height while it is shown, without its shadow padding.
+    var liveViewCardHeightIfShown: CGFloat? {
+        guard shownSurface == .liveViewPanel else { return nil }
+        let contentHeight = liveViewContentSizeBox.latestContentSize.height
+        return contentHeight > 0 ? contentHeight - 2 * LiveViewPanelView.shadowPadding : nil
+    }
     /// The command pill's capsule the parked pill took the place of, when the task was submitted from the pill at the
     /// pointer: while the cursor stays parked, its pill keeps the capsule's tip-facing edge and vertical center.
     private(set) var parkedPillCommandPillHandoff: CommandPillHandoff?
@@ -420,6 +440,7 @@ final class CursorSurfaces {
             self.liveViewPanelFrameApplier.scheduleFrameUpdate { [weak self] in
                 self?.liveViewPanelFrame(forPanelSize: self?.liveViewContentSizeBox.latestContentSize ?? .zero)
             }
+            self.onLiveViewSizeChange?()
         }
         liveViewPanelMoveObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didMoveNotification, object: liveViewPanel, queue: .main
@@ -459,7 +480,10 @@ final class CursorSurfaces {
         // The panel's content carries its own shadow padding, so the card itself lands 16 points from the edges.
         let inset = Self.screenEdgeInset - LiveViewPanelView.shadowPadding
         let insetVisibleFrame = ScreenGeometry.visibleFrame(of: ScreenGeometry.screenUnderMouse).insetBy(dx: inset, dy: inset)
-        return liveViewCorner.point(of: insetVisibleFrame)
+        let cornerPoint = liveViewCorner.point(of: insetVisibleFrame)
+        // AppKit's y grows upward: live views at a bottom corner stack up, at a top corner down.
+        let stackDirection: CGFloat = liveViewCorner == .bottomLeft || liveViewCorner == .bottomRight ? 1 : -1
+        return CGPoint(x: cornerPoint.x, y: cornerPoint.y + stackDirection * liveViewStackOffsetInPoints)
     }
 
     private func rememberUserMovedLiveViewPanel() {
